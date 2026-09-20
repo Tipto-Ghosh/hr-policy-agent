@@ -1,0 +1,80 @@
+# --- Core Utilities & CLI ---
+pydantic
+pydantic-settings
+pyyaml
+python-dotenv
+structlog
+tenacity
+typer
+rich
+tqdm
+
+# --- Vector DB, Database Drivers & Embeddings ---
+qdrant-client
+psycopg[binary,pool]
+langchain-ollama
+FlagEmbedding
+
+# --- Document Processing, Parsing & Data Handling ---
+pymupdf
+pdfplumber
+docling
+pandas
+rapidfuzz
+ftfy
+regex
+pillow
+opencv-python-headless
+
+# --- Database & ORM ---
+sqlalchemy
+alembic
+
+# --- Agentic & RAG Frameworks ---
+langgraph
+langchain
+langchain-core
+langgraph-checkpoint-postgres
+langgraph-checkpoint-sqlite
+langchain-google-genai
+langchain-groq
+ragas
+
+# --- PII, NLP & Language Detection ---
+presidio-analyzer
+presidio-anonymizer
+spacy
+lingua-language-detector
+
+# --- Web Framework & API ---
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+sse-starlette
+slowapi
+pyjwt
+bcrypt
+streamlit
+
+# --- Observability & Telemetry ---
+arize-phoenix-otel
+openinference-instrumentation-langchain
+
+# --- Data Science & Analytics ---
+scikit-learn
+scipy
+numpy
+matplotlib
+
+# --- Development & Testing Tools ---
+pytest
+pytest-cov
+pytest-asyncio
+ruff
+mypy
+pre-commit
+poethepoet
+ipykernel
+jupyterlab
+ipywidgets
