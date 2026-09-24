@@ -1,0 +1,52 @@
+injection:
+  # injection_classifier_score(text) > threshold  then blocked
+  threshold: 0.5
+  heuristic_markers:
+    - "ignore previous"
+    - "ignore the above"
+    - "disregard the above"
+    - "you are now"
+    - "system prompt"
+    - "reveal your instructions"
+    - "print your prompt"
+    - "repeat the words above"
+    - "what were you told"
+
+sensitive_case:
+  markers:
+    - "my case"
+    - "my complaint"
+    - "my grievance"
+    - "my disciplinary"
+    - "my termination"
+    - "my specific situation"
+    - "investigate me"
+
+retry:
+  # retry_count >= max_retries then stop retrying and answer_insufficient
+  max_retries: 1
+
+pii:
+  # Regex-based first pass.
+  regex_patterns:
+    EMAIL: "[\\w.+-]+@[\\w-]+\\.[\\w.-]+"
+    BD_PHONE: "\\b(?:\\+?88)?01[3-9]\\d{8}\\b"
+    BD_NID: "\\b\\d{10}(?:\\d{3})?(?:\\d{4})?\\b"
+  # Presidio (NER-based) second pass, entities to detect/mask.
+  presidio_entities:
+    - PERSON
+    - EMAIL_ADDRESS
+    - PHONE_NUMBER
+    - LOCATION
+    - NRP
+  presidio_language: "en"
+  presidio_score_threshold: 0.5
+
+output_guard:
+  citation_markers:
+    - "Knowledge Base"
+    - "Web Search"
+  disclaimer: "\n\n_This is policy information, not legal advice._"
+  refusal_template: >-
+    I'm not able to confidently answer that based on verified sources.
+    Could you rephrase the question or point me to a more specific document?
