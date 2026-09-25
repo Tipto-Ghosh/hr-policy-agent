@@ -58,6 +58,11 @@ class Settings(BaseSettings):
         alias = "TAVILY_API_KEY"   
     )
     
+    # pii / presidio
+    spacy_model_name: str = Field(
+        default = "en_core_web_sm"
+    )
+    
     # paths
     data_raw_dir: Path = Path("data/raw")
     data_processed_dir: Path = Path("data/processed")
