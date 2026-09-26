@@ -11,21 +11,44 @@ Follow the steps in order. Every command assumes you are running from the
 Before you begin, make sure:
 
 - Python **3.11+** is installed.
-- Project dependencies are installed:
+- The project is installed in editable mode so `hr_agent` is importable:
+
   ```bash
+  uv pip install -e .
+  # or, if you don't use uv:
   pip install -e .
-  # or, if you use uv:
-  uv sync
   ```
+
 - A `.env` file exists at the repository root with at least:
+
   ```dotenv
   PINECONE_API_KEY=your-pinecone-api-key
   # optional, only needed if you use the LlamaParse path instead of the markdown file
   LLAMA_PARSER_API_KEY=your-llamaparse-key
   ```
+
 - Your Pinecone account has (or can auto-create) an index named `hr-policy-agent`
   with dimension **384** and metric **cosine**. The pipeline creates it
   automatically if it does not exist.
+
+- Your config files are in place:
+
+  ```
+  configs/
+  ├── chunking.yaml
+  └── guardrails.yaml
+  ```
+
+  `configs/chunking.yaml` is the single source of truth for chunk sizes,
+  length thresholds, orphan-detection thresholds, and header regexes.
+
+> **Tip:** confirm the package resolves before running anything else:
+>
+> ```bash
+> uv run python -c "import hr_agent; print(hr_agent.__file__)"
+> ```
+>
+> Expected: a path ending in `src\hr_agent\__init__.py`.
 
 ---
 
@@ -48,12 +71,18 @@ repo_root/
 ├── data/
 │   ├── raw/
 │   └── processed/
-├── src/
 ├── configs/
+│   ├── chunking.yaml
+│   └── guardrails.yaml
+├── scripts/
+│   └── pinecone_stats.py
+├── src/
+│   └── hr_agent/
 └── .env
 ```
 
 > **Windows PowerShell equivalents** (if you are not on bash):
+>
 > ```powershell
 > New-Item -ItemType Directory -Force -Path data/raw
 > New-Item -ItemType Directory -Force -Path data/processed
@@ -77,7 +106,7 @@ repo_root/
 3. Convert the PDF to Markdown and save it under `data/processed/`:
 
    ```bash
-   python -m hr_agent.ingestion.parse_pdf \
+   uv run python -m hr_agent.ingest.parse_pdf \
      --input  data/raw/hr_policy.pdf \
      --output data/processed/hr_policy.md
    ```
@@ -110,47 +139,99 @@ repo_root/
 From the repository root:
 
 ```bash
-python -m hr_agent.ingestion
+uv run python -m hr_agent.ingest
 ```
 
 What the pipeline does, in order:
 
 1. Reads `data/processed/hr_policy.md`.
-2. Strips the repeated `gesci / Founded by UN ICT Task Force` header.
-3. Re-structures the document into Markdown headers (`#`, `##`, `###`, `####`).
+2. Strips the repeated `gesci / Founded by UN ICT Task Force` header
+   (`utils/markdown_utils.strip_running_headers`).
+3. Re-structures the document into Markdown headers (`#`, `##`, `###`, `####`)
+   using the header regexes from `configs/chunking.yaml`
+   (`utils/markdown_utils.txt_to_markdown`).
 4. Splits it hierarchically using `MarkdownHeaderTextSplitter`.
 5. Splits any oversized chunks with `RecursiveCharacterTextSplitter`
-   (max size 2000, overlap 200).
+   (`chunk_size` and `chunk_overlap` from `configs/chunking.yaml`).
 6. Attaches `source_doc_id`, `breadcrumb`, and document-level metadata to
-   every chunk.
-7. Creates the Pinecone index `hr-policy-agent` if it does not exist.
-8. Upserts every chunk with a **content-addressed ID** so re-runs are
-   idempotent, then deletes any stale vectors from previous runs.
+   every chunk (`ingest/metadata.enrich_chunks`).
+7. Runs `ingest/validation.validate_chunks` — three checks (orphaned headers,
+   chunk length bounds, breadcrumb coverage) — and prints a one-line summary.
+8. Creates the Pinecone index `hr-policy-agent` if it does not exist.
+9. Upserts every chunk with a **content-addressed ID** so re-runs are
+   idempotent, then deletes any stale vectors from previous runs
+   (`ingest/index.reindex_document`).
 
 ### Expected output
 
 ```
 [pipeline] source_doc_id = hr_policy-a1b2c3d4e5f6
 [pipeline] 197 final chunks
+[pipeline] validation: total_chunks=197 orphaned_headers=0 too_short=0 too_long=0 missing_breadcrumb=0
 [pipeline] source_doc_id=hr_policy-a1b2c3d4e5f6 upserted=197 deleted_stale=0
 ```
 
-A success run prints three lines:
+A success run prints four lines:
 
 | Line | Meaning |
 |---|---|
 | `source_doc_id` | Stable hash of the source file — used to version chunks. |
 | `N final chunks` | How many chunks were produced and will be embedded. |
-| `upserted=... deleted_stale=...` | Vectors upserted and stale vectors removed. |
+| `validation: …` | Chunk-quality counters. All zeros means clean chunking. |
+| `upserted=… deleted_stale=…` | Vectors upserted and stale vectors removed. |
+
+> **If `orphaned_headers` or `missing_breadcrumb` is non-zero**, the pipeline
+> prints up to five examples with a preview. Common fix: adjust the header
+> regexes in `configs/chunking.yaml` and re-run. No need to touch Python.
 
 ---
 
-## Step 4 — Verify the ingestion
+## Step 4 — Inspect the Pinecone store
+
+Run the read-only stats tool to confirm vectors landed and to see per-document
+counts:
+
+```bash
+uv run scripts/pinecone_stats.py
+```
+
+Expected output for a healthy run:
+
+```
+Index         : hr-policy-agent
+Dimension     : 384
+Total vectors : 197
+Namespaces:
+  - hr-policy-agent-namespace               197
+
+Namespace 'hr-policy-agent-namespace': 197 vectors
+Vectors for source_doc_id=hr_policy-a1b2c3d4e5f6: 197
+```
+
+What each number means:
+
+| Field | Meaning |
+|---|---|
+| `Total vectors` | Every vector in the index, across all namespaces. |
+| Per-namespace line | Count inside `settings.pinecone_namespace`. This is the one to compare against `[pipeline] N final chunks`. |
+| `Vectors for source_doc_id=…` | Vectors whose ID starts with this document's prefix (i.e. everything produced from `hr_policy.md`). |
+
+**If the namespace count is higher than the ingestion log's chunk count**,
+either the ingestion was run with random IDs at some point (old data), or a
+second document is sharing the namespace. Use `scripts/pinecone_stats.py`
+to spot the mismatch and clean the namespace if needed.
+
+**If the count is zero**, the upsert silently failed — check the Pinecone
+dashboard, region, and API key.
+
+---
+
+## Step 5 — Verify retrieval
 
 Run a sample retrieval to confirm the vectors are queryable:
 
 ```bash
-python -m hr_agent.retrieval.retrieve
+uv run python -m hr_agent.retrieval.retrieve
 ```
 
 Expected output (truncated):
@@ -170,11 +251,45 @@ If you see breadcrumb-tagged results, the pipeline is fully wired end to end.
 The pipeline is **idempotent and diff-aware**:
 
 - Run it twice without changing `hr_policy.md` → `deleted_stale=0`, no
-  duplicate vectors.
+  duplicate vectors. `scripts/pinecone_stats.py` still reports the same count.
 - Edit `hr_policy.md` and run again → chunks whose content changed get new
-  IDs; chunks whose content disappeared are deleted as *stale*.
+  IDs; chunks whose content disappeared are deleted as *stale*. The stats
+  tool's per-`source_doc_id` count will reflect the new total.
 
 You never need to manually delete the namespace or recreate the index.
+
+---
+
+## Tuning without editing Python
+
+All chunking knobs live in `configs/chunking.yaml`:
+
+```yaml
+length:
+  min_chars: 30                  # validator: shorter chunks are "too_short"
+  max_chars: 2200                # validator: longer  chunks are "too_long"
+  orphan_body_threshold_chars: 15
+
+splitting:
+  chunk_size: 2000               # RecursiveCharacterTextSplitter target
+  chunk_overlap: 200
+
+header_regexes:
+  section:          '^\d+\.?\s+[A-Z][A-Z\s,&]+$'
+  subsection:       '^\d+\.\d+\s+[A-Z]'
+  subsubsection:    '^\d+\.\d+\.\d+\s+[A-Z]'
+  subsubsubsection: '^\d+\.\d+\.\d+\.\d+\s+[A-Z]'
+```
+
+Edit the file, re-run `uv run python -m hr_agent.ingest`, and the new values
+take effect. No code changes, no reinstall.
+
+> In a long-running REPL/notebook, cached configs need a refresh:
+>
+> ```python
+> from hr_agent.core.settings import get_chunking_config
+> get_chunking_config.cache_clear()
+> ```
 
 ---
 
@@ -182,11 +297,15 @@ You never need to manually delete the namespace or recreate the index.
 
 | Symptom | Fix |
 |---|---|
+| `ModuleNotFoundError: No module named 'hr_agent'` | Run `uv pip install -e .` from the repo root. |
+| `FileNotFoundError: configs/chunking.yaml` | Confirm the file exists with that exact name (`.yaml`, not `.yml`). |
+| `AttributeError: 'ChunkingConfig' object has no attribute 'min_chars'` | Access is at the wrong nesting level; it's `cfg.length.min_chars`, not `cfg.min_chars`. |
 | `FileNotFoundError: data/processed/hr_policy.md` | Repeat Step 2; ensure the markdown file exists. |
 | `RuntimeError: PINECONE_API_KEY is not set` | Add `PINECONE_API_KEY=...` to `.env` at the repo root. |
 | `Waiting for index to be ready...` loops forever | Check your Pinecone project region / quota in the dashboard. |
 | `deleted_stale=` grows every run with identical input | Your file has non-deterministic whitespace — normalise line endings (`dos2unix data/processed/hr_policy.md`). |
-| Retrieval returns the wrong sections | Confirm `MAX_CHUNK_SIZE` and header regexes in `ingestion/ingest.py` match the document's structure. |
+| `pinecone_stats.py` shows more vectors than the pipeline logged | Older runs used random IDs, or another document shares the namespace. Inspect per-`source_doc_id` counts to confirm. |
+| Retrieval returns the wrong sections | Tune `length` and `header_regexes` in `configs/chunking.yaml`, then re-ingest. |
 
 ---
 
@@ -195,12 +314,24 @@ You never need to manually delete the namespace or recreate the index.
 For convenience, the full happy path in one block:
 
 ```bash
+# 0. install the package (only needed once per environment)
+uv pip install -e .
+
+# 1. create folders
 mkdir -p data/raw data/processed
 
+# 2. place the files
 cp /path/to/GESCI_HRPPM_2018.pdf data/raw/hr_policy.pdf
 cp /path/to/hr_policy.md         data/processed/hr_policy.md
 
-python -m hr_agent.ingestion
+# 3. ingest
+uv run python -m hr_agent.ingest
+
+# 4. inspect
+uv run scripts/pinecone_stats.py
+
+# 5. verify retrieval
+uv run python -m hr_agent.retrieval.retrieve
 ```
 
 Done — the HR Policy Manual is now embedded in Pinecone and queryable.
