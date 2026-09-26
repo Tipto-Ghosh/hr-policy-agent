@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from src.hr_agent.core.settings import get_settings, get_guardrails_config
+from hr_agent.core.settings import get_settings, get_guardrails_config
 
 
 @dataclass(frozen = True)

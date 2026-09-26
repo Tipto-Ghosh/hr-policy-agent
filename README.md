@@ -77,7 +77,7 @@ repo_root/
 3. Convert the PDF to Markdown and save it under `data/processed/`:
 
    ```bash
-   python -m src.hr_agent.ingestion.parse_pdf \
+   python -m hr_agent.ingestion.parse_pdf \
      --input  data/raw/hr_policy.pdf \
      --output data/processed/hr_policy.md
    ```
@@ -110,7 +110,7 @@ repo_root/
 From the repository root:
 
 ```bash
-python -m src.hr_agent.ingestion
+python -m hr_agent.ingestion
 ```
 
 What the pipeline does, in order:
@@ -150,7 +150,7 @@ A success run prints three lines:
 Run a sample retrieval to confirm the vectors are queryable:
 
 ```bash
-python -m src.hr_agent.retrieval.retrieve
+python -m hr_agent.retrieval.retrieve
 ```
 
 Expected output (truncated):
@@ -200,7 +200,7 @@ mkdir -p data/raw data/processed
 cp /path/to/GESCI_HRPPM_2018.pdf data/raw/hr_policy.pdf
 cp /path/to/hr_policy.md         data/processed/hr_policy.md
 
-python -m src.hr_agent.ingestion
+python -m hr_agent.ingestion
 ```
 
 Done — the HR Policy Manual is now embedded in Pinecone and queryable.

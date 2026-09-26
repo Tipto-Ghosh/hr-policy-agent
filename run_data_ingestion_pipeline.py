@@ -1,6 +1,6 @@
 from pinecone import Pinecone
-from src.hr_agent.core.settings import get_settings
-from src.hr_agent.ingest.ingest import run_pipeline
+from hr_agent.core.settings import get_settings
+from hr_agent.ingest.pipeline import run_pipeline
 
 
 if __name__ == "__main__":
