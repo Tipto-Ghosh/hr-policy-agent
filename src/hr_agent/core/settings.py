@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GUARDRAILS_CONFIG_PATH = REPO_ROOT / "configs" / "guardrails.yaml"
+DEFAULT_CHUNKING_CONFIG_PATH = REPO_ROOT / "configs" / "chunking.yaml"
 
 
 class Settings(BaseSettings):
@@ -71,7 +72,8 @@ class Settings(BaseSettings):
     
     # guardrails
     guardrails_config_path: Path = DEFAULT_GUARDRAILS_CONFIG_PATH
-
+    # chunking
+    chunking_config_path: Path = DEFAULT_CHUNKING_CONFIG_PATH
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -119,3 +121,35 @@ def get_guardrails_config(path: Path | None = None) -> GuardrailsConfig:
         raw = yaml.safe_load(f) or {}
     
     return GuardrailsConfig.model_validate(raw)
+
+# Chunking config
+class LengthConfig(BaseModel):
+    min_chars: int = 30
+    max_chars: int = 2200
+    orphan_body_threshold_chars: int = 15
+
+class SplittingConfig(BaseModel):
+    chunk_size: int = 2000
+    chunk_overlap: int = 200
+
+class HeaderRegexConfig(BaseModel):
+    section: str
+    subsection: str
+    subsubsection: str
+    subsubsubsection: str
+
+class ChunkingConfig(BaseModel):
+    length: LengthConfig = Field(default_factory=LengthConfig)
+    splitting: SplittingConfig = Field(default_factory=SplittingConfig)
+    header_regexes: HeaderRegexConfig
+
+@lru_cache()
+def get_chunking_config(path: Path | None = None) -> ChunkingConfig:
+    """
+    Load and cache the chunking configuration from the specified YAML file.
+    """
+    resolved_path = path or get_settings().chunking_config_path
+    with open(resolved_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    
+    return ChunkingConfig.model_validate(raw)

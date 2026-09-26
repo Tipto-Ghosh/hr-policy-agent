@@ -1,0 +1,15 @@
+length:
+  min_chars: 30 # chunks shorter than this  are "too_short"
+  max_chars: 2200 # chunks longer than this are "too_long"
+  orphan_body_threshold_chars: 15  # heading-only chunk detection threshold
+
+splitting:
+  max_chunk_size: 2000 # split_large_chunks() target size
+  chunk_overlap: 200 # split_large_chunks() overlap
+
+# Regexes used by txt_to_markdown() to promote lines into markdown headers.
+header_regexes:
+  section: '^\d+\.?\s+[A-Z][A-Z\s,&]+$'
+  subsection: '^\d+\.\d+\s+[A-Z]'
+  subsubsection: '^\d+\.\d+\.\d+\s+[A-Z]'
+  subsubsubsection: '^\d+\.\d+\.\d+\.\d+\s+[A-Z]'
