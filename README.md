@@ -67,7 +67,7 @@ mkdir -p data/processed
 After this step your tree should look like:
 
 ```
-repo_root/
+hr-policy-agent/
 ├── data/
 │   ├── raw/
 │   └── processed/
@@ -334,4 +334,3 @@ uv run scripts/pinecone_stats.py
 uv run python -m hr_agent.retrieval.retrieve
 ```
 
-Done — the HR Policy Manual is now embedded in Pinecone and queryable.
