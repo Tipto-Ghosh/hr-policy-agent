@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GUARDRAILS_CONFIG_PATH = REPO_ROOT / "configs" / "guardrails.yaml"
 DEFAULT_CHUNKING_CONFIG_PATH = REPO_ROOT / "configs" / "chunking.yaml"
+DEFAULT_MODELS_CONFIG_PATH = REPO_ROOT / "configs" / "models.yaml"
 
 
 class Settings(BaseSettings):
@@ -74,6 +75,8 @@ class Settings(BaseSettings):
     guardrails_config_path: Path = DEFAULT_GUARDRAILS_CONFIG_PATH
     # chunking
     chunking_config_path: Path = DEFAULT_CHUNKING_CONFIG_PATH
+    # models
+    models_config_path: Path = DEFAULT_MODELS_CONFIG_PATH
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -153,3 +156,26 @@ def get_chunking_config(path: Path | None = None) -> ChunkingConfig:
         raw = yaml.safe_load(f) or {}
     
     return ChunkingConfig.model_validate(raw)
+
+class ModelPricing(BaseModel):
+    provider: str = ""
+    input_cost_per_1k_usd: float = 0.0
+    output_cost_per_1k_usd: float = 0.0
+
+class ToolPricing(BaseModel):
+    cost_per_call_usd: float = 0.0
+
+class ModelsConfig(BaseModel):
+    models: dict[str, ModelPricing] = Field(default_factory=dict)
+    tools: dict[str, ToolPricing] = Field(default_factory=dict)
+    
+@lru_cache()
+def get_models_config(path: Path | None = None) -> ModelsConfig:
+    """
+    Load and cache the models configuration from the specified YAML file.
+    """
+    resolved_path = path or get_settings().models_config_path
+    with open(resolved_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    
+    return ModelsConfig.model_validate(raw)

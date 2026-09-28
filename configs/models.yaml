@@ -1,0 +1,10 @@
+models:
+  groq_llm:
+    provider: groq
+    input_cost_per_1k_usd: 0.05
+    output_cost_per_1k_usd: 0.08
+
+tools:
+  travily_search:
+    provider: travily
+    cost_per_call_usd: 0.005
