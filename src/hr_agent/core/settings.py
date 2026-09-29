@@ -6,11 +6,14 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import torch
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_GUARDRAILS_CONFIG_PATH = REPO_ROOT / "configs" / "guardrails.yaml"
 DEFAULT_CHUNKING_CONFIG_PATH = REPO_ROOT / "configs" / "chunking.yaml"
 DEFAULT_MODELS_CONFIG_PATH = REPO_ROOT / "configs" / "models.yaml"
+DEFAULT_QUERY_ANALYSIS_CONFIG_PATH = REPO_ROOT / "configs" / "query_analysis.yaml"
 
 
 class Settings(BaseSettings):
@@ -44,7 +47,12 @@ class Settings(BaseSettings):
     embedding_model_name: str = Field(
         default = "sentence-transformers/all-MiniLM-L6-v2"
     )
-    
+    embedding_model_kwargs: dict = Field(
+        default_factory=lambda: {"device": "cpu" if not torch.cuda.is_available() else "cuda"}
+    )
+    embedding_model_encode_kwargs: dict = Field(
+        default_factory=lambda: {"normalize_embeddings": True}
+    )
     # llm
     groq_api_key: str = Field(
         default = "",
@@ -77,6 +85,8 @@ class Settings(BaseSettings):
     chunking_config_path: Path = DEFAULT_CHUNKING_CONFIG_PATH
     # models
     models_config_path: Path = DEFAULT_MODELS_CONFIG_PATH
+    # query analysis
+    query_analysis_config_path: Path = DEFAULT_QUERY_ANALYSIS_CONFIG_PATH
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -179,3 +189,35 @@ def get_models_config(path: Path | None = None) -> ModelsConfig:
         raw = yaml.safe_load(f) or {}
     
     return ModelsConfig.model_validate(raw)
+
+
+class QueryAnalysisConfig(BaseModel):
+    max_turns: int = 4
+    model_name: str = "openai/gpt-oss-20b"
+    prompt: str = (
+        "Given the conversation history and a follow-up question, rewrite "
+        "the follow-up question as a standalone question that can be "
+        "understood WITHOUT the conversation history. Resolve pronouns and "
+        "implicit references (e.g. \"their\", \"it\", \"that policy\") using "
+        "the history.\n\n"
+        "Rules:\n"
+        "- If the follow-up question is already standalone, return it UNCHANGED.\n"
+        "- Do NOT answer the question.\n"
+        "- Do NOT add information that isn't implied by the history.\n"
+        "- Return ONLY the rewritten question, nothing else.\n\n"
+        "Conversation history:\n{history}\n\n"
+        "Follow-up question: {question}\n\n"
+        "Standalone question:"
+    )
+    
+    
+@lru_cache()
+def get_query_analysis_config(path: Path | None = None) -> QueryAnalysisConfig:
+    """
+    Load and cache the query analysis configuration from the specified YAML file.
+    """
+    resolved_path = path or get_settings().query_analysis_config_path
+    with open(resolved_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    
+    return QueryAnalysisConfig.model_validate(raw)
