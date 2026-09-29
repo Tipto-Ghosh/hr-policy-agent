@@ -1,0 +1,27 @@
+# How many of the most recent turns to include in the prompt.
+# Higer -> more context, but longer prompts.
+# Lower -> less context, but shorter prompts.
+max_turns: 4
+
+# which LLM to use for rewriting
+model_name: "openai/gpt-oss-20b"
+
+# Prompt template to use for rewriting the query. 
+prompt: |
+  Given the conversation history and a follow-up question, rewrite the follow-up
+  question as stand alone question that can be understood WITHOUT the conversation 
+  history. Resolve pronouns and implicit references.(e.g. "their", "it", "that policy")
+  using the conversation history. 
+
+  Rules:
+  - If the follow-up question is already a stand-alone(no ambiguous references), return it UNCHANGED.
+  - Do NOT answer the question.
+  - Do NOT add information that is not implied by the history.
+  - Return ONLY the rewritten question, nothing else - no preamble, no explanation, no quotes.
+
+  Conversation history:
+  {history}
+
+  Follow-up question: {question}
+
+  Standalone question:
