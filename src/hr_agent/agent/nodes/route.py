@@ -29,7 +29,7 @@ def make_router_node(router_llm: Runnable) -> Runnable:
             question = question
         )
         decision: Route = router_llm.invoke(
-           inputs = router_prompt 
+           router_prompt 
         )
         return {
             "route": decision.route,
