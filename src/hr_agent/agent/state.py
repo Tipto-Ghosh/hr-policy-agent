@@ -28,6 +28,10 @@ class AgentState(TypedDict):
     memory_context: dict[str, Any]
     chat_history: Annotated[List[BaseMessage], add_messages]
     
+    # Compressed representation of older turns. Written by summarize_history
+    history_summary: str
+    
+    
     # retrieval
     retrieved_docs: List[Document]
     web_search_results: str 

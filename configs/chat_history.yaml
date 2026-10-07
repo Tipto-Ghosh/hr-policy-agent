@@ -1,0 +1,3 @@
+DEFAULT_TOKEN_BUDGET: 2000
+CHAR_PER_TOKEN: 4  # rough estimate of average
+KEEP_LAST_N_TURNS: 4  # number of turns to keep in memory before summarizing

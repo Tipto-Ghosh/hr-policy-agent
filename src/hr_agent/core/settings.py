@@ -14,6 +14,7 @@ DEFAULT_GUARDRAILS_CONFIG_PATH = REPO_ROOT / "configs" / "guardrails.yaml"
 DEFAULT_CHUNKING_CONFIG_PATH = REPO_ROOT / "configs" / "chunking.yaml"
 DEFAULT_MODELS_CONFIG_PATH = REPO_ROOT / "configs" / "models.yaml"
 DEFAULT_QUERY_ANALYSIS_CONFIG_PATH = REPO_ROOT / "configs" / "query_analysis.yaml"
+CHAT_HISTORY_CONFIG_PATH = REPO_ROOT / "configs" / "chat_history.yaml"
 
 
 class Settings(BaseSettings):
@@ -87,6 +88,8 @@ class Settings(BaseSettings):
     models_config_path: Path = DEFAULT_MODELS_CONFIG_PATH
     # query analysis
     query_analysis_config_path: Path = DEFAULT_QUERY_ANALYSIS_CONFIG_PATH
+    # chat history
+    chat_history_config_path: Path = CHAT_HISTORY_CONFIG_PATH
 
 @lru_cache()
 def get_settings() -> Settings:
@@ -221,3 +224,13 @@ def get_query_analysis_config(path: Path | None = None) -> QueryAnalysisConfig:
         raw = yaml.safe_load(f) or {}
     
     return QueryAnalysisConfig.model_validate(raw)
+
+def get_chat_history_config(path: Path | None = None) -> dict:
+    """
+    Load and cache the chat history configuration from the specified YAML file.
+    """
+    resolved_path = path or get_settings().chat_history_config_path
+    with open(resolved_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f) or {}
+    
+    return raw
