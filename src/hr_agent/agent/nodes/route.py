@@ -1,24 +1,13 @@
 from __future__ import annotations
-from typing import Literal
-
 from langchain_core.runnables import Runnable
-from pydantic import BaseModel, Field
-
 from hr_agent.agent.prompts.router import ROUTER_PROMPT
 from hr_agent.agent.state import AgentState
+from hr_agent.agent.schemas import Route
 
 __all__ = [
     "make_router_node",
-    "Route"
 ]
 
-
-class Route(BaseModel):
-    """A route to a specific node in the agent's workflow."""
-
-    route: Literal["knowledge_base", "direct_answer"] = Field(
-        description = "The route to take based on the question."
-    )
     
 def make_router_node(router_llm: Runnable) -> Runnable:
     """Creates a router node that determines the appropriate route based on the question."""

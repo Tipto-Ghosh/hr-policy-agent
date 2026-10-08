@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import Runnable
-from pydantic import BaseModel, Field
+from hr_agent.agent.schemas import _ScopeDecision
 
 from hr_agent.agent.prompts.scope import SCOPE_PROMPT
 from hr_agent.agent.state import AgentState
@@ -20,10 +20,6 @@ SENSITIVE_CASE_MARKERS = [
     "my termination", "my specific situation", "investigate me",
 ]
 
-class _ScopeDecision(BaseModel):
-    in_scope: bool = Field(
-        description = "True if the question is HR/organizational in scope."
-    )
 
 def _heuristic_injection(text: str) -> bool:
     lowered = text.lower()

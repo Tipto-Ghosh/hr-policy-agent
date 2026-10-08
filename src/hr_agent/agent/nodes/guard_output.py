@@ -1,21 +1,16 @@
 from __future__ import annotations
-import re 
-
 from langchain_core.runnables import Runnable
-from pydantic import BaseModel, Field
 from hr_agent.agent.nodes.refuse import REFUSAL_TEMPLATE
 from hr_agent.agent.nodes.sensitive_case import DISCLAIMER
 from hr_agent.agent.prompts.groundness_check_prompt import GROUNDEDNESS_CHECK_PROMPT
 from hr_agent.agent.state import AgentState
 from hr_agent.guardrails.pii import mask_pii
-
+from hr_agent.agent.schemas import GroundednessResult
 
 __all__ = [
     "make_guard_output_node",
 ]
 
-class GroundednessResult(BaseModel):
-    grounded: bool = Field(..., description="Whether the answer is grounded in the context")
 
 def _citation_ok(answer: str) -> bool:
     return "Knowledge Base" in answer or "Web Search" in answer
