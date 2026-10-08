@@ -34,6 +34,7 @@ from hr_agent.agent.routing import (
 from hr_agent.agent.state import AgentState
 from hr_agent.agent.checkpoint import get_checkpointer
 from hr_agent.memory.store import get_store
+from hr_agent.llm.registry import LLMBundle
 
 __all__ = [
     "GraphDeps",
@@ -45,56 +46,51 @@ __all__ = [
 @dataclass
 class GraphDeps:
     """All injectable dependencies for one graph instance."""
-    scope_llm: Runnable # structured: in_scope
-    router_llm: Runnable # structured: route
-    kb_grader_llm: Runnable # structured: grade
-    web_grader_llm: Runnable # structured: grade
-    groundness_llm: Runnable # structured: grounded
-    rewriter_llm: Runnable # plain chat
-    generator_llm: Runnable # plain chat
-    memory_extractor_llm: Runnable # plain chat(JSON output)
-    summarizer_llm: Runnable # plain chat
+    llms: LLMBundle
     retriever: Runnable
-    contextualize_llm: Runnable # plain chat
     web_search: Runnable # TavilySearch
     
 
 def build_graph(deps: GraphDeps) -> StateGraph:
+    # first get all the llms
+    llms = deps.llms
+    
     workflow = StateGraph(AgentState)
     
     # guardrail nodes
-    workflow.add_node("guard_input", make_guard_input_node(deps.scope_llm))
+    workflow.add_node("guard_input", make_guard_input_node(llms.scope_structured))
     workflow.add_node("refuse", refuse_node)
     workflow.add_node("sensitive_case_response", sensitive_case_node)
-    workflow.add_node("guard_output", make_guard_output_node(deps.groundness_llm))
+    workflow.add_node("guard_output", make_guard_output_node(llms.groundedness))
     
     # memory and context nodes
     workflow.add_node("load_context", make_load_context_node())
     workflow.add_node(
         "contextualize_query",
-        lambda state: contextualize_query_node(state, deps.contextualize_llm)
+        lambda state: contextualize_query_node(state, llms.contextualize)
     )
     
     # routing / retrieval nodes
-    workflow.add_node("route_question", make_router_node(deps.router_llm))
+    workflow.add_node("route_question", make_router_node(llms.router_structured))
     workflow.add_node("retrieve_kb_docs", make_retrieve_node(deps.retriever))
-    workflow.add_node("grade_kb_evidence", make_grade_kb_node(deps.kb_grader_llm))
+    workflow.add_node("grade_kb_evidence", make_grade_kb_node(llms.kb_grader))
     workflow.add_node("web_search", make_web_search_node(deps.web_search))
-    workflow.add_node("grade_web_evidence", make_grade_web_node(deps.web_grader_llm))
-    workflow.add_node("rewrite_query", make_rewrite_query_node(deps.rewriter_llm))
+    workflow.add_node("grade_web_evidence", make_grade_web_node(llms.web_grader))
+    workflow.add_node("rewrite_query", make_rewrite_query_node(llms.rewriter))
     
     # generation nodes
-    workflow.add_node("generate_from_kb", make_generate_kb_node(deps.generator_llm))
-    workflow.add_node("generate_from_web_search", make_generate_web_node(deps.generator_llm))
-    workflow.add_node("direct_answer", make_direct_answer_node(deps.generator_llm))
+    workflow.add_node("generate_from_kb", make_generate_kb_node(llms.generator))
+    workflow.add_node("generate_from_web_search", make_generate_web_node(llms.generator))
+    workflow.add_node("direct_answer", make_direct_answer_node(llms.generator))
+    
     workflow.add_node("answer_insufficient", answer_insufficient_node)
     
     # summarization nodes
     workflow.add_node(
         "summarize_history",
-        make_summarize_history_node(deps.summarizer_llm)
+        make_summarize_history_node(llms.summarizer)
     )
-    workflow.add_node("persist", make_persist_node(deps.memory_extractor_llm))
+    workflow.add_node("persist", make_persist_node(llms.memory_extract))
     
     # edges
     workflow.add_edge(START, "guard_input")

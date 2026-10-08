@@ -16,10 +16,8 @@ def _citation_ok(answer: str) -> bool:
     return "Knowledge Base" in answer or "Web Search" in answer
 
 
-def make_guard_output_node(groundedness_llm: Runnable) -> Runnable:
-    structured_groundedness_llm = (
-        groundedness_llm.with_structured_output(GroundednessResult)
-    )
+def make_guard_output_node(groundedness_structured_llm: Runnable) -> Runnable:
+    
 
     def guard_output_node(state: AgentState) -> dict:
         answer = state.get("answer", "")
@@ -34,7 +32,7 @@ def make_guard_output_node(groundedness_llm: Runnable) -> Runnable:
                     doc.page_content for doc in context_docs
                 )
 
-                decision = structured_groundedness_llm.invoke(
+                decision = groundedness_structured_llm.invoke(
                     GROUNDEDNESS_CHECK_PROMPT.format(
                         context = context,
                         answer = answer,

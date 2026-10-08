@@ -30,4 +30,4 @@ class EvidenceGrade(BaseModel):
     )
     
 class GroundednessResult(BaseModel):
-    grounded: bool = Field(..., description="Whether the answer is grounded in the context")
+    grounded: bool = Field(..., description="Whether the answer is grounded in the context. True if it is grounded, False otherwise.")

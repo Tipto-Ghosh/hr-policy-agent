@@ -1,7 +1,7 @@
 """Terminal node: writes memory, audit row and usage summary"""
 
 from __future__ import annotations
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig
 from langchain_core.messages import AIMessage
 
 from hr_agent.agent.state import AgentState
@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 def make_persist_node(memory_extract_llm: Runnable) -> Runnable:
-    def persist_node(state: AgentState) -> dict:
+    def persist_node(state: AgentState, config: RunnableConfig) -> dict:
         answer = state.get("answer", "")
         question = state.get("masked_question") or state["question"]
         guard_verdict = state.get("guard_verdict", "")
@@ -61,13 +61,16 @@ def make_persist_node(memory_extract_llm: Runnable) -> Runnable:
         # write audit row
         try:
             trace = []
-            recorder = state.get("trace_recorder")
-            if recorder:
-                trace = recorder.as_list()
+            configurable = (config or {}).get("configurable", {})
+            trace_recorder = configurable.get("trace_recorder")
+            usage_recorder = configurable.get("usage_recorder")
+            
+            
+            if trace_recorder is not None:
+                trace = trace_recorder.as_list()
                 
-            usage = state.get("usage_recorder")
-            if usage is not None:
-                summary = usage.summarize()
+            if usage_recorder is not None:
+                summary = usage_recorder.summarize()
                 trace = trace + [
                     f"usage_calls={summary.call_count}",
                     f"usage_cost_usd={summary.total_cost_usd:.5f}",

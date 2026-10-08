@@ -5,8 +5,6 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from hr_agent.audit.trace import TraceRecorder
-from hr_agent.llm.usage import UsageRecorder
 from hr_agent.memory.profile_adapter import UserProfile
 
 
@@ -51,6 +49,3 @@ class AgentState(TypedDict):
     guard_verdict: str # "ok" | "blocked" | "sensitive_case"
     guard_reason: str
     
-    # observability
-    trace_recorder: TraceRecorder
-    ussage_recorder: UsageRecorder

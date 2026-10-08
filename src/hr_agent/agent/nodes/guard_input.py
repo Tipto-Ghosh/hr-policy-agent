@@ -54,7 +54,7 @@ def make_guard_input_node(
             }
         
         decision: _ScopeDecision = scope_llm.invoke(
-            input = SCOPE_PROMPT.format(question)
+            input = SCOPE_PROMPT.format(question = question)
         )
         if not decision.in_scope:
             return {

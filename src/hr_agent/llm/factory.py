@@ -28,7 +28,7 @@ def _build_chat_model(temperature: float = 0.0) -> BaseChatModel:
     """
     settings = get_settings()
     return ChatGroq(
-        model = settings.groq_model,
+        model = settings.groq_model_name,
         temperature = temperature,
         api_key = settings.groq_api_key,
     )
