@@ -2,8 +2,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from src.hr_agent.audit.db import connect
-from src.hr_agent.audit.models import AuditRow
+from hr_agent.audit.db import connect
+from hr_agent.audit.models import AuditRow
 
 def write_audit(
     question: str, 
