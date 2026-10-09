@@ -32,7 +32,7 @@ from hr_agent.agent.routing import (
     route_after_web_grade
 )
 from hr_agent.agent.state import AgentState
-from hr_agent.agent.checkpoint import get_checkpointer
+from hr_agent.agent.checkpoint import get_checkpointer, get_async_checkpointer
 from hr_agent.memory.store import get_store
 from hr_agent.llm.registry import LLMBundle
 

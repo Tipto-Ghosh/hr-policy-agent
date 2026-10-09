@@ -114,3 +114,55 @@ def ask_agent(
         usage_recorder.summarize().print_table()
     
     return result
+
+async def ask_agent_async(
+    question: str, 
+    user_id: str, 
+    chat_id: str, 
+    deps: GraphDeps | None = None, 
+    checkpointer = None, 
+    store = None, 
+    verbose: bool = False
+) -> dict:
+    
+    """Run one turn end-to-end.  `thread_id` is f"{user_id}:{chat_id}" so
+    different chats don't share short-term memory even for the same user.
+    Long-term preference memory is keyed by `user_id_hash` and shared
+    across all of that user's chats.
+    """
+    if deps is None:
+        deps = default_deps()
+        
+    graph = compile_graph(
+        deps = deps,
+        checkpointer = checkpointer,
+        store = store
+    )    
+    
+    thread_id = f"{user_id}:{chat_id}"
+    
+    # per-run, non-serializable context travel here
+    trace_recorder = TraceRecorder()
+    usage_recorder = UsageRecorder()
+    
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "trace_recorder": trace_recorder,
+            "usage_recorder": usage_recorder,
+        }
+    }
+    
+    initial = build_initial_state(question, user_id, chat_id)
+    result = await graph.ainvoke(initial, config = config)
+    
+    if verbose:
+        print("=" * 40)
+        print("Question:", question)
+        print("GUARD VERDICT:", result.get("guard_verdict"))
+        print("SOURCE USED:", result.get("source_used"))
+        print("\nANSWER:\n", result.get("answer"))
+        print("\n--- usage summary ---")
+        usage_recorder.summarize().print_table()
+    
+    return result
