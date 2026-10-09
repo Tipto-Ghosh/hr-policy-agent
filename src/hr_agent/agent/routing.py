@@ -9,13 +9,22 @@ __all__ = [
 ]
 
 def route_after_guard(state: AgentState) -> str:
-    return state.get("guard_verdict", "blocked")
-
+    verdict = state.get("guard_verdict")
+    if verdict not in ("ok", "blocked", "sensitive_case"):
+        return "blocked"
+    return verdict
+    
 def route_after_router(state: AgentState) -> str:
-    return state.get("route", "direct_answer")
+    route = state.get("route")
+    if route not in ("knowledge_base", "direct_answer"):
+        return "knowledge_base"
+    return route
 
 def route_after_kb_grade(state: AgentState) -> str:
-    return state.get("retrieved_docs_evidence_grade", "weak")
+    grade = state.get("retrieved_docs_evidence_grade")
+    if grade not in ("good", "weak"):
+        return "weak"
+    return grade
 
 def route_after_web_grade(state: AgentState) -> str:
     if state.get("web_search_results_evidence_grade") == "good":

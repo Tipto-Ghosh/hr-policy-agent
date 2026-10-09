@@ -125,7 +125,7 @@ def build_graph(deps: GraphDeps) -> StateGraph:
         route_after_kb_grade,
         {
             "good": "generate_from_kb",
-            "weak": "web_search",
+            "weak": "answer_insufficient",
         }
     )
     

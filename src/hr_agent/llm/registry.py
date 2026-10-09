@@ -39,25 +39,19 @@ def build_default_llm_bundle() -> LLMBundle:
     """
     Builds a bundle of LLMs for the agent to use.
     """
-    generator = factory.get_generator_llm()
-    router = factory.get_router_llm()
-    scope = factory.get_scope_llm()
-    rewriter = factory.get_rewriter_llm()
-    summarizer = factory.get_summarizer_llm()
-    
     return LLMBundle(
-        generator = generator,
-        router = router,
-        scope = scope,
-        rewriter = rewriter,
-        summarizer = summarizer,
+        generator = factory.get_generator_llm(),
+        router = factory.get_router_llm(),
+        scope = factory.get_scope_llm(),
+        rewriter = factory.get_rewriter_llm(),
+        summarizer = factory.get_summarizer_llm(),
         router_structured = factory.get_router_structured_llm(),
         scope_structured = factory.get_scope_structured_llm(),
         kb_grader = factory.get_kb_grader_llm(),
         web_grader = factory.get_web_grader_llm(),
         groundedness = factory.get_groundedness_llm(),
-        contextualize = rewriter, # same model, different prompt
-        memory_extract = summarizer, # same model, different prompt
+        contextualize = factory.get_rewriter_llm(), # same model, different prompt
+        memory_extract = factory.get_summarizer_llm(), # same model, different prompt
     )
     
 def build_mock_llm_bundle(mock: Runnable) -> LLMBundle:

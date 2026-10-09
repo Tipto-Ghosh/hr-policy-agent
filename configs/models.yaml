@@ -1,10 +1,200 @@
+# Three concerns live here:
+# 1. roles: which provider+model to use for each agent role, plus an optional `fallback_role` for provider outages
+# 2. providers: per-provider connection defaults (base_url, etc.)
+# 3. models: pricing used by llm/pricing.py for cost estimation
+#
+# To switch a role's provider or model, edit ONLY its `roles:` entry.
+# To give a role a fallback, set `fallback_role: <other_role_name>`.
+# No code changes required.
+
+# Roles
+# Convention used below:
+#  user-facing generation + classification -> Groq (primary)
+#  short structured internal tasks (graders, groundedness, memory extraction) -> Ollama (primary)
+#  the *_local role names exist specifically  -> Ollama (fallback targets)
+#
+# Any `fallback_role` must itself be defined in this same map.
+roles:
+  # generator 
+  generator:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 30
+    max_retries: 1
+    fallback_role: generator_local
+
+  generator_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # router 
+  router:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: router_local
+
+  router_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # scope 
+  scope:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: scope_local
+
+  scope_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # kb_grader 
+  # Ollama primary; Groq as a fallback if the local model is unavailable.
+  kb_grader:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+    fallback_role: kb_grader_remote
+
+  kb_grader_remote:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+
+  # web_grader 
+  web_grader:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+    fallback_role: web_grader_remote
+
+  web_grader_remote:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+
+  # groundedness
+  groundedness:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+    fallback_role: groundedness_remote
+
+  groundedness_remote:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+
+  # rewriter 
+  rewriter:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: rewriter_local
+
+  rewriter_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # contextualize 
+  contextualize:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: contextualize_local
+
+  contextualize_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # memory_extract 
+  memory_extract:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: memory_extract_local
+
+  memory_extract_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+  # summarizer 
+  summarizer:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 20
+    max_retries: 1
+    fallback_role: summarizer_local
+
+  summarizer_local:
+    provider: ollama
+    model: qwen2.5:1.5b-instruct
+    temperature: 0.0
+    timeout_s: 60
+    max_retries: 1
+
+# Provider connection defaults
+providers:
+  groq:
+    base_url: "https://api.groq.com/openai/v1"
+  ollama:
+    base_url: "http://localhost:11434"
+
+# Pricing 
 models:
   groq_llm:
     provider: groq
     input_cost_per_1k_usd: 0.05
     output_cost_per_1k_usd: 0.08
 
+  ollama_llm:
+    provider: ollama
+    input_cost_per_1k_usd: 0.0 # for local models, assume no cost for input tokens
+    output_cost_per_1k_usd: 0.0 # for local models, assume no cost for output tokens
+
 tools:
-  travily_search:
-    provider: travily
+  tavily_search:
     cost_per_call_usd: 0.005

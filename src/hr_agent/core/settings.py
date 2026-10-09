@@ -178,7 +178,20 @@ class ModelPricing(BaseModel):
 class ToolPricing(BaseModel):
     cost_per_call_usd: float = 0.0
 
+class RoleConfig(BaseModel):
+    provider: str 
+    model: str 
+    temperature: float = 0.0
+    timeout_s: int = 30.0
+    max_retries: int = 1
+    fallback_role: str | None = None
+    
+class ProviderDefaults(BaseModel):
+    base_url: str = ""
+
 class ModelsConfig(BaseModel):
+    roles: dict[str, RoleConfig] = Field(default_factory=dict)
+    providers: dict[str, ProviderDefaults] = Field(default_factory=dict)
     models: dict[str, ModelPricing] = Field(default_factory=dict)
     tools: dict[str, ToolPricing] = Field(default_factory=dict)
     
