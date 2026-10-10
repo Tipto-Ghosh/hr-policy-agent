@@ -38,6 +38,36 @@ def _build_state_and_config(
     return initial, config
 
 
+def _breadcrumbs_from(state: dict) -> list[str]:
+    """Extract the breadcrumb of each retrieved doc, skipping empty ones."""
+    out: list[str] = []
+    for d in state.get("retrieved_docs", []) or []:
+        bc = (d.metadata or {}).get("breadcrumb", "")
+        if bc:
+            out.append(bc)
+    return out
+
+
+def _response_from_state(
+    state: dict, req: ChatRequest, user: AuthUser
+) -> ChatResponse:
+    """Build the public ChatResponse from the graph's final state."""
+    return ChatResponse(
+        request_id=user.request_id,
+        chat_id=req.chat_id,
+        question=req.question,
+        current_query=state.get("current_query", ""),
+        answer=state.get("answer", ""),
+        source_used=state.get("source_used", ""),
+        guard_verdict=state.get("guard_verdict", ""),
+        guard_reason=state.get("guard_reason", ""),
+        citation_ok=state.get("citation_ok", False),
+        grounded=state.get("grounded", False),
+        retrieved_breadcrumbs=_breadcrumbs_from(state),
+        evidence_grade=state.get("retrieved_docs_evidence_grade", ""),
+    )
+
+
 @router.post("", response_model=ChatResponse, responses={500: {"model": ErrorResponse}})
 async def chat(
     req: ChatRequest,
@@ -50,25 +80,7 @@ async def chat(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
-    return ChatResponse(
-        request_id=user.request_id,
-        chat_id=req.chat_id,
-        question=req.question,
-        current_query=result.get("current_query", ""),
-        answer=result.get("answer", ""),
-        source_used=result.get("source_used", ""),
-        guard_verdict=result.get("guard_verdict", ""),
-        guard_reason=result.get("guard_reason", ""),
-        citation_ok=result.get("citation_ok", False),
-        grounded=result.get("grounded", False),
-        retretrieved_breadcrumbs=[
-            d.metadata.get("breadcrumb", "")
-            for d in result.get("retrieved_docs", [])
-        ],
-        evidence_grade=result.get(
-            "retrieved_docs_evidence_grade", ""
-        ),
-    )
+    return _response_from_state(result, req, user)
 
 
 @router.post("/stream")
@@ -97,25 +109,7 @@ async def chat_stream(
             final_state = await graph.aget_state(config)
             values = final_state.values if final_state else {}
 
-            final_payload = ChatResponse(
-                request_id=user.request_id,
-                chat_id=req.chat_id,
-                question=req.question,
-                current_query=values.get("current_query", ""),
-                answer=values.get("answer", ""),
-                source_used=values.get("source_used", ""),
-                guard_verdict=values.get("guard_verdict", ""),
-                guard_reason=values.get("guard_reason", ""),
-                citation_ok=values.get("citation_ok", False),
-                grounded=values.get("grounded", False),
-                retrieved_breadcrumbs=[
-                   d.metadata.get("breadcrumb", "")
-                   for d in values.get("retrieved_docs", [])
-               ],
-               evidence_grade=values.get(
-                   "retrieved_docs_evidence_grade", ""
-               ),
-            ).model_dump()
+            final_payload = _response_from_state(values, req, user).model_dump()
             yield f"event: done\ndata: {json.dumps(final_payload)}\n\n"
 
         except Exception as e:
