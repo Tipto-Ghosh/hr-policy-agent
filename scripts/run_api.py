@@ -4,15 +4,16 @@ import asyncio
 import sys
 
 import uvicorn
-
+from hr_agent.api.config import get_api_settings
 
 def main() -> None:
+    api_settings = get_api_settings()
     config = uvicorn.Config(
         "hr_agent.api.app:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=False,        # reload spawns subprocesses; see note below
-        loop="asyncio",      # explicit: don't let uvicorn pick uvloop
+        host = api_settings.api_host,
+        port = api_settings.api_port,
+        reload = api_settings.api_load, 
+        loop="asyncio",     
         log_level="info",
     )
     server = uvicorn.Server(config)
