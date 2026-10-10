@@ -1,21 +1,19 @@
+# configs/models.yaml
+#
 # Three concerns live here:
-# 1. roles: which provider+model to use for each agent role, plus an optional `fallback_role` for provider outages
-# 2. providers: per-provider connection defaults (base_url, etc.)
-# 3. models: pricing used by llm/pricing.py for cost estimation
+#   1. roles:      provider+model per agent role, with optional `fallback_role`
+#   2. providers:  per-provider connection defaults
+#   3. models:     pricing used by llm/pricing.py for cost estimation
 #
-# To switch a role's provider or model, edit ONLY its `roles:` entry.
-# To give a role a fallback, set `fallback_role: <other_role_name>`.
-# No code changes required.
+# Current posture: Groq is primary for every role. Ollama is the fallback
+# target for every role, used only when Groq is unreachable or rate-limited.
+# To flip a role back to local-first, swap the `provider:`/`model:` values
+# on that role and its `*_local` sibling.
+#
+# Any `fallback_role` must be defined in this same map.
 
-# Roles
-# Convention used below:
-#  user-facing generation + classification -> Groq (primary)
-#  short structured internal tasks (graders, groundedness, memory extraction) -> Ollama (primary)
-#  the *_local role names exist specifically  -> Ollama (fallback targets)
-#
-# Any `fallback_role` must itself be defined in this same map.
 roles:
-  # generator 
+  # ---------------- generator ----------------
   generator:
     provider: groq
     model: openai/gpt-oss-20b
@@ -31,7 +29,7 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # router 
+  # ---------------- router ----------------
   router:
     provider: groq
     model: openai/gpt-oss-20b
@@ -47,7 +45,7 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # scope 
+  # ---------------- scope ----------------
   scope:
     provider: groq
     model: openai/gpt-oss-20b
@@ -63,56 +61,55 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # kb_grader 
-  # Ollama primary; Groq as a fallback if the local model is unavailable.
+  # ---------------- kb_grader ----------------
   kb_grader:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 30
+    max_retries: 1
+    fallback_role: kb_grader_local
+
+  kb_grader_local:
     provider: ollama
     model: qwen2.5:1.5b-instruct
     temperature: 0.0
     timeout_s: 60
     max_retries: 1
-    fallback_role: kb_grader_remote
 
-  kb_grader_remote:
-    provider: groq
-    model: openai/gpt-oss-20b
-    temperature: 0.0
-    timeout_s: 20
-    max_retries: 1
-
-  # web_grader 
+  # ---------------- web_grader ----------------
   web_grader:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 30
+    max_retries: 1
+    fallback_role: web_grader_local
+
+  web_grader_local:
     provider: ollama
     model: qwen2.5:1.5b-instruct
     temperature: 0.0
     timeout_s: 60
     max_retries: 1
-    fallback_role: web_grader_remote
 
-  web_grader_remote:
-    provider: groq
-    model: openai/gpt-oss-20b
-    temperature: 0.0
-    timeout_s: 20
-    max_retries: 1
-
-  # groundedness
+  # ---------------- groundedness ----------------
   groundedness:
+    provider: groq
+    model: openai/gpt-oss-20b
+    temperature: 0.0
+    timeout_s: 30
+    max_retries: 1
+    fallback_role: groundedness_local
+
+  groundedness_local:
     provider: ollama
     model: qwen2.5:1.5b-instruct
     temperature: 0.0
     timeout_s: 60
     max_retries: 1
-    fallback_role: groundedness_remote
 
-  groundedness_remote:
-    provider: groq
-    model: openai/gpt-oss-20b
-    temperature: 0.0
-    timeout_s: 20
-    max_retries: 1
-
-  # rewriter 
+  # ---------------- rewriter ----------------
   rewriter:
     provider: groq
     model: openai/gpt-oss-20b
@@ -128,7 +125,7 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # contextualize 
+  # ---------------- contextualize ----------------
   contextualize:
     provider: groq
     model: openai/gpt-oss-20b
@@ -144,7 +141,7 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # memory_extract 
+  # ---------------- memory_extract ----------------
   memory_extract:
     provider: groq
     model: openai/gpt-oss-20b
@@ -160,7 +157,7 @@ roles:
     timeout_s: 60
     max_retries: 1
 
-  # summarizer 
+  # ---------------- summarizer ----------------
   summarizer:
     provider: groq
     model: openai/gpt-oss-20b
@@ -183,7 +180,7 @@ providers:
   ollama:
     base_url: "http://localhost:11434"
 
-# Pricing 
+# Pricing (used by llm/pricing.py for cost estimates)
 models:
   groq_llm:
     provider: groq
@@ -192,8 +189,8 @@ models:
 
   ollama_llm:
     provider: ollama
-    input_cost_per_1k_usd: 0.0 # for local models, assume no cost for input tokens
-    output_cost_per_1k_usd: 0.0 # for local models, assume no cost for output tokens
+    input_cost_per_1k_usd: 0.0
+    output_cost_per_1k_usd: 0.0
 
 tools:
   tavily_search:
