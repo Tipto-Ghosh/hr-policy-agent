@@ -187,6 +187,10 @@ hr-policy-agent/
 
 ---
 
+> **New to this project?** Start with
+> [`START_THE_PROJECT.md`](docs/START_THE_PROJECT.md) — a step-by-step guide
+> for running everything on a fresh machine.
+
 ## Quickstart
 
 **Prerequisites:**
