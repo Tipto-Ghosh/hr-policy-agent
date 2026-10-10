@@ -1,13 +1,12 @@
-"""
-Checkpoint for short-term(per-thread) memory.
-SqliteServer for now, PostgresServer when FastAPI lands.
-"""
-# TODO: For now we are using sqlite for short-term memory, but we should switch to Postgres when FastAPI is implemented.
-
 from __future__ import annotations
+
 import sqlite3
 from functools import lru_cache
 from pathlib import Path
+
+from aiosqlite import connect as aiosqlite_connect
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
@@ -48,26 +47,43 @@ _async_checkpointer: AsyncSqliteSaver | None = None
 
 async def get_async_checkpointer() -> AsyncSqliteSaver:
     """
-    Async counterpart to get_checkpointer().
+    Return the async checkpointer.
+    
+    Backend is selected by `settings.postgres_dsn`:
+     - non-empty -> AsyncPostgresSaver (see checkpoint_postgres.py)
+      - empty -> AsyncSqliteSaver
     """
-    global _async_checkpointer
-    if _async_checkpointer is None:
-        import aiosqlite
-
-        settings = get_settings()
-        db_path = Path(settings.memory_db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        conn = await aiosqlite.connect(str(db_path))
-        _async_checkpointer = AsyncSqliteSaver(
-            conn=conn,
-            serde=_build_serde(),
+    
+    settings = get_settings()
+    # postgres branch
+    if settings.uses_postgres:
+        from hr_agent.agent.checkpoint_postgres import (
+            get_async_postgres_checkpointer
         )
-    return _async_checkpointer
-
+        return await get_async_postgres_checkpointer()
+    
+    # sqlite branch
+    global _async_checkpointer
+    if _async_checkpointer is not None:
+        return _async_checkpointer
+    
+    db_path = Path(settings.memory_db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite_connect(str(db_path))
+    _async_cp = AsyncSqliteSaver(conn)
+    return _async_cp
+    
 
 async def close_async_checkpointer() -> None:
     """Close the cached async checkpointer (call on FastAPI shutdown)."""
+    settings = get_settings()
+    if settings.uses_postgres:
+        from hr_agent.agent.checkpoint_postgres import (
+            close_async_postgres_checkpointer
+        )
+        await close_async_postgres_checkpointer()
+        return
+    
     global _async_checkpointer
     if _async_checkpointer is not None:
         await _async_checkpointer.conn.close()
