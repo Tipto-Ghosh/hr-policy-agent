@@ -1,3 +1,18 @@
+# docker-compose.yml
+#
+# Two services:
+#   postgres — the database (Session 2)
+#   api      — the FastAPI service (Session 3)
+#
+# Ollama and Streamlit stay on the host. See docs/docker.md.
+#
+# Usage:
+#   docker compose up -d                     # start everything
+#   docker compose up -d postgres            # just the DB (native dev mode)
+#   docker compose logs -f api               # tail API logs
+#   docker compose down                      # stop, keep volumes
+#   docker compose down -v                   # stop, wipe volumes
+
 services:
   postgres:
     image: postgres:16
@@ -7,7 +22,6 @@ services:
       POSTGRES_USER: hr_agent
       POSTGRES_PASSWORD: hr_agent_dev
       POSTGRES_DB: hr_agent
-      # Reasonable defaults for dev; tune for prod.
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     ports:
       - "5432:5432"
@@ -19,5 +33,54 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hr-policy-agent-api:dev
+    container_name: hr-agent-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # ---- server bind ----
+      # 0.0.0.0 so the container is reachable from the host.
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+      API_RELOAD: "false"
+
+      # ---- database ----
+      # Inside the compose network, the hostname is the service name.
+      POSTGRES_DSN: "postgresql://hr_agent:hr_agent_dev@postgres:5432/hr_agent"
+
+      # ---- provider keys (must be set in .env on the host) ----
+      GROQ_API_KEY: "${GROQ_API_KEY}"
+      PINECONE_API_KEY: "${PINECONE_API_KEY}"
+      JWT_SECRET: "${JWT_SECRET:-dev-only-change-me}"
+
+      # ---- misc ----
+      # Keep the HuggingFace cache inside the container's named volume
+      # (declared below), so the embedding model is not re-downloaded on
+      # every rebuild.
+      HF_HOME: "/app/.cache/huggingface"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Config YAML is mounted, not baked — tuning chunking/guardrails/models
+      # does not require a rebuild.
+      - ./configs:/app/configs:ro
+      # Embedding model cache persists across container restarts.
+      - hf_cache:/app/.cache/huggingface
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8000/health', timeout=2).status==200 else sys.exit(1)\""
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s   # model download + graph warmup can take a while
+
 volumes:
   postgres_data:
+  hf_cache:

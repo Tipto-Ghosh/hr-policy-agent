@@ -1,168 +1,344 @@
-# HR Policy Agent — Ingestion Guide
+# HR Policy Agent
 
-This guide walks you through ingesting the GESCI HR Policy Manual into Pinecone.
-Follow the steps in order. Every command assumes you are running from the
-**repository root** (the folder that contains `pyproject.toml` / `.env`).
+A version-aware, self-reflective retrieval-augmented generation (RAG) system
+for HR policy documents, built on LangGraph, Pinecone, and Groq/Ollama.
 
----
-
-## Prerequisites
-
-Before you begin, make sure:
-
-- Python **3.11+** is installed.
-- The project is installed in editable mode so `hr_agent` is importable:
-
-  ```bash
-  uv pip install -e .
-  # or, if you don't use uv:
-  pip install -e .
-  ```
-
-- A `.env` file exists at the repository root with at least:
-
-  ```dotenv
-  PINECONE_API_KEY=your-pinecone-api-key
-  # optional, only needed if you use the LlamaParse path instead of the markdown file
-  LLAMA_PARSER_API_KEY=your-llamaparse-key
-  ```
-
-- Your Pinecone account has (or can auto-create) an index named `hr-policy-agent`
-  with dimension **384** and metric **cosine**. The pipeline creates it
-  automatically if it does not exist.
-
-- Your config files are in place:
-
-  ```
-  configs/
-  ├── chunking.yaml
-  └── guardrails.yaml
-  ```
-
-  `configs/chunking.yaml` is the single source of truth for chunk sizes,
-  length thresholds, orphan-detection thresholds, and header regexes.
-
-> **Tip:** confirm the package resolves before running anything else:
->
-> ```bash
-> uv run python -c "import hr_agent; print(hr_agent.__file__)"
-> ```
->
-> Expected: a path ending in `src\hr_agent\__init__.py`.
+The agent answers questions about an organization's HR policy manual with
+clause-level citations, resolves conversational follow-ups using chat history,
+persists short-term and long-term memory across restarts, and falls back to
+abstention when the policy is silent — rather than hallucinating.
 
 ---
 
-## Step 1 — Create the data folders
+## Table of contents
 
-The pipeline expects a `data/` directory tree with `raw/` for the source PDF
-and `processed/` for the markdown file that is actually chunked and embedded.
+- [What this project does](#what-this-project-does)
+- [Architecture](#architecture)
+- [Repository structure](#repository-structure)
+- [Quickstart](#quickstart)
+- [Running the stack](#running-the-stack)
+  - [Native development](#native-development)
+  - [Containerized backend](#containerized-backend)
+- [Configuration](#configuration)
+- [Ingestion](#ingestion)
+- [Evaluation](#evaluation)
+- [Testing](#testing)
+- [Observability](#observability)
+- [Deployment modes](#deployment-modes)
+- [Design decisions](#design-decisions)
+- [Roadmap](#roadmap)
+- [Documentation index](#documentation-index)
+- [License](#license)
 
-Run from the repository root:
+---
 
-```bash
-mkdir -p data/raw
-mkdir -p data/processed
+## What this project does
+
+Given a question about an HR policy manual, the agent:
+
+1. **Guards the input** — detects prompt injection, checks scope, masks
+   Bangladesh-specific PII (email, phone, NID), and identifies sensitive
+   cases ("my grievance", "my termination").
+2. **Resolves conversational references** — a follow-up like "What about
+   their reporting timelines?" is rewritten to a standalone question using
+   the chat history before the first retrieval attempt.
+3. **Retrieves evidence** — Pinecone hybrid search over chunked policy text
+   with breadcrumb metadata (Section > SubSection > SubSubSection).
+4. **Grades the evidence** — an LLM grader classifies the retrieved context
+   as `good` or `weak` before generation.
+5. **Generates an answer** — with `[Source: Section X.Y.Z]` citations, a
+   version note when multiple versions match, and a "policy information,
+   not legal advice" disclaimer.
+6. **Guards the output** — deterministic checks (citation presence) plus an
+   LLM groundedness check; falls back to a refusal template when the answer
+   is not supported.
+7. **Persists memory** — short-term chat history via LangGraph's checkpointer
+   (SQLite or Postgres), long-term preferences via LangGraph's Store
+   (InMemory or Postgres).
+8. **Writes an audit row** — request id, hashed user id, guard verdict,
+   source used, and node-by-node trace, queryable via a CLI tool.
+
+The project is deliberately **closed-domain**: when the policy does not
+answer the question, the agent abstains instead of reaching for the open web.
+
+---
+
+## Architecture
+
+```
+                        ┌──────────────────────┐
+                        │   Streamlit UI       │
+                        │   (native, :8501)    │
+                        └───────────┬──────────┘
+                                    │ HTTP / SSE
+                                    ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    FastAPI service (:8000)                    │
+│   /auth/login   /chat   /chat/stream   /memory   /feedback    │
+│   /health       /ready                                        │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+        ┌───────────────────────────────────────┐
+        │         LangGraph agent               │
+        │                                       │
+        │  guard_input                          │
+        │     ├─► load_context  (memory read)   │
+        │     ├─► contextualize_query           │
+        │     ├─► route_question                │
+        │     │       ├─► retrieve_kb_docs      │
+        │     │       │       └─► grade_kb      │
+        │     │       │              ├─ good ►  │
+        │     │       │              └─ weak ►  │
+        │     │       │                   abstain│
+        │     │       └─► direct_answer         │
+        │     └─► refuse / sensitive_case       │
+        │                                       │
+        │  generate_from_kb                     │
+        │     └─► summarize_history             │
+        │            └─► guard_output           │
+        │                    └─► persist        │
+        │                          (memory write,│
+        │                           audit row,   │
+        │                           usage log)   │
+        └───────┬───────────────────┬───────────┘
+                │                   │
+     ┌──────────┴───────┐     ┌─────┴──────┐
+     │  Checkpointer    │     │   Store    │
+     │  (short-term)    │     │(long-term) │
+     │  SQLite │ Postgres│    │InMem│PG    │
+     └──────────────────┘     └────────────┘
+
+              ┌─────────────────────────┐
+              │   External services     │
+              │   Pinecone (vectors)    │
+              │   Groq (LLMs, primary)  │
+              │   Ollama (LLMs, fallback)│
+              └─────────────────────────┘
 ```
 
-After this step your tree should look like:
+**Retrieval pipeline (offline, at ingestion):**
+
+```
+PDF ─► Markdown ─► header-aware chunking ─► validation
+    ─► metadata enrichment (breadcrumb, source_doc_id)
+    ─► HuggingFace embeddings (all-MiniLM-L6-v2, 384-dim)
+    ─► Pinecone upsert with content-addressed IDs
+```
+
+**LLM layer:** every role (generator, router, scope, graders, rewriter,
+memory extractor, summarizer) is configured in `configs/models.yaml` with
+a primary provider and a fallback. Switching a role's provider is a YAML
+edit — no code change.
+
+---
+
+## Repository structure
 
 ```
 hr-policy-agent/
-├── data/
-│   ├── raw/
-│   └── processed/
 ├── configs/
-│   ├── chunking.yaml
-│   └── guardrails.yaml
+│   ├── chunking.yaml            # chunk sizes, thresholds, header regexes
+│   ├── guardrails.yaml          # injection markers, PII config
+│   ├── models.yaml              # role → provider+model, with fallbacks
+│   └── users.yaml               # demo users (swap for real auth later)
+├── data/
+│   ├── raw/                     # original PDFs (git-ignored)
+│   ├── processed/               # extracted markdown
+│   ├── eval/                    # golden question sets
+│   └── audit/                   # SQLite audit + feedback DB
+├── docs/
+│   ├── architecture.md
+│   ├── ingestion_guide.md
+│   ├── postgres.md
+│   ├── docker.md
+│   └── results.md               # evaluation output
+├── notebooks/                   # exploratory notebooks (00–04)
 ├── scripts/
-│   └── pinecone_stats.py
-├── src/
-│   └── hr_agent/
-└── .env
+│   ├── run_api.py               # Windows-safe API launcher
+│   ├── init_postgres.py         # one-time schema provisioning
+│   ├── pinecone_stats.py        # index inspection
+│   ├── audit_stats.py           # audit log summary
+│   ├── feedback_stats.py        # thumbs up/down summary
+│   ├── run_eval.py              # retrieval recall@k
+│   └── show_llm_roles.py        # print resolved role→provider mapping
+├── src/hr_agent/
+│   ├── agent/                   # graph, state, nodes, prompts
+│   ├── api/                     # FastAPI app, routes, auth, schemas
+│   ├── audit/                   # SQLite audit + feedback writers
+│   ├── core/                    # settings, config loaders
+│   ├── evaluation/              # recall@k, golden-set loader
+│   ├── guardrails/              # PII masking
+│   ├── ingest/                  # chunking, embedding, indexing
+│   ├── llm/                     # factory, registry, usage tracking
+│   ├── memory/                  # profile adapter, Store, policy
+│   ├── retrieval/               # retriever, query analysis
+│   └── utils/                   # markdown helpers
+├── tests/
+│   ├── api/                     # auth, memory, feedback endpoints
+│   └── integration/             # Postgres backend (skips without DSN)
+├── ui/                          # Streamlit app
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+├── pyproject.toml
+└── README.md
 ```
 
-> **Windows PowerShell equivalents** (if you are not on bash):
->
-> ```powershell
-> New-Item -ItemType Directory -Force -Path data/raw
-> New-Item -ItemType Directory -Force -Path data/processed
-> ```
-
 ---
 
-## Step 2 — Upload the HR policy PDF
+## Quickstart
 
-1. Download or obtain the source PDF: **`GESCI_HRPPM_2018.pdf`**
-   (the GESCI Human Resource Policies and Procedure Manual, Revised 2018).
+**Prerequisites:**
 
-2. Place the file inside `data/raw/`:
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Docker Desktop (for Postgres) — optional; SQLite works out of the box
+- Groq API key
+- Pinecone API key
+- Ollama (optional, for local fallback)
 
-   ```bash
-   cp /path/to/GESCI_HRPPM_2018.pdf data/raw/hr_policy.pdf
-   ```
-
-   The pipeline uses the fixed filename `hr_policy.pdf` by default.
-
-3. Convert the PDF to Markdown and save it under `data/processed/`:
-
-   ```bash
-   uv run python -m hr_agent.ingest.parse_pdf \
-     --input  data/raw/hr_policy.pdf \
-     --output data/processed/hr_policy.md
-   ```
-
-   If you already have the markdown file (for example, it was generated by
-   LlamaParse in a previous session), just copy it into place instead:
-
-   ```bash
-   cp /path/to/hr_policy.md data/processed/hr_policy.md
-   ```
-
-4. Verify both files exist:
-
-   ```bash
-   ls -lh data/raw/hr_policy.pdf
-   ls -lh data/processed/hr_policy.md
-   ```
-
-   Expected (sizes will differ):
-
-   ```
-   -rw-r--r--  1 user  staff   ~700K  data/raw/hr_policy.pdf
-   -rw-r--r--  1 user  staff   ~180K  data/processed/hr_policy.md
-   ```
-
----
-
-## Step 3 — Run the ingestion pipeline
-
-From the repository root:
+**Five-minute happy path (SQLite, no Docker):**
 
 ```bash
+# 1. install
+uv pip install -e .
+
+# 2. configure
+cp .env.example .env
+# edit .env: set GROQ_API_KEY, PINECONE_API_KEY, JWT_SECRET
+
+# 3. ingest the HR policy (see docs/ingestion_guide.md for details)
+mkdir -p data/raw data/processed
+cp /path/to/hr_policy.md data/processed/hr_policy.md
 uv run python -m hr_agent.ingest
+
+# 4. start the API (SQLite-backed, no Postgres required)
+uv run python scripts/run_api.py
+
+# 5. (separate terminal) start the UI
+uv run streamlit run ui/app.py
 ```
 
-What the pipeline does, in order:
+Open `http://localhost:8501`, log in with `tipto / demo`, and ask a question.
 
-1. Reads `data/processed/hr_policy.md`.
-2. Strips the repeated `gesci / Founded by UN ICT Task Force` header
-   (`utils/markdown_utils.strip_running_headers`).
-3. Re-structures the document into Markdown headers (`#`, `##`, `###`, `####`)
-   using the header regexes from `configs/chunking.yaml`
-   (`utils/markdown_utils.txt_to_markdown`).
-4. Splits it hierarchically using `MarkdownHeaderTextSplitter`.
-5. Splits any oversized chunks with `RecursiveCharacterTextSplitter`
-   (`chunk_size` and `chunk_overlap` from `configs/chunking.yaml`).
-6. Attaches `source_doc_id`, `breadcrumb`, and document-level metadata to
-   every chunk (`ingest/metadata.enrich_chunks`).
-7. Runs `ingest/validation.validate_chunks` — three checks (orphaned headers,
-   chunk length bounds, breadcrumb coverage) — and prints a one-line summary.
-8. Creates the Pinecone index `hr-policy-agent` if it does not exist.
-9. Upserts every chunk with a **content-addressed ID** so re-runs are
-   idempotent, then deletes any stale vectors from previous runs
-   (`ingest/index.reindex_document`).
+---
 
-### Expected output
+## Running the stack
+
+### Native development
+
+Fastest loop. No containers except Postgres (optional).
+
+```bash
+# Terminal 1 — Postgres in Docker (optional; SQLite works without it)
+docker compose up -d postgres
+
+# Terminal 2 — API on the host
+uv run python scripts/run_api.py
+
+# Terminal 3 — UI on the host
+uv run streamlit run ui/app.py
+
+# Terminal 4 — Ollama for local fallbacks (optional)
+ollama serve
+```
+
+With `POSTGRES_DSN` set in `.env` (see [Configuration](#configuration)),
+the API uses Postgres for both short-term and long-term memory. Leave it
+empty to use SQLite + InMemory.
+
+### Containerized backend
+
+Postgres and the API in Docker; Streamlit and Ollama stay native.
+
+```bash
+# 1. build and start
+docker compose up -d
+
+# 2. watch it come up
+docker compose ps
+docker compose logs -f api
+
+# 3. verify
+curl http://localhost:8000/health
+curl http://localhost:8000/ready | python -m json.tool
+
+# 4. UI on the host, unchanged
+uv run streamlit run ui/app.py
+```
+
+See [`docs/docker.md`](docs/docker.md) for the full container guide:
+rebuild workflow, log viewing, volume reset, and switching between the
+native and containerized backends.
+
+### API endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/auth/login` | Exchange username/password for a JWT |
+| `POST` | `/chat` | One turn, synchronous JSON |
+| `POST` | `/chat/stream` | One turn, SSE, one event per node |
+| `GET` | `/memory` | List current user's preference memories |
+| `DELETE` | `/memory/{key}` | Forget a preference |
+| `POST` | `/feedback` | Thumbs up/down, correlated to the audit row |
+| `GET` | `/health` | Liveness |
+| `GET` | `/ready` | Readiness with per-dependency checks |
+
+Interactive docs at `http://localhost:8000/docs` when the API is running.
+
+---
+
+## Configuration
+
+All runtime configuration is in `.env` (copy from `.env.example`). The
+important keys:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GROQ_API_KEY` | Primary LLM provider | — |
+| `PINECONE_API_KEY` | Vector store | — |
+| `JWT_SECRET` | Signs API tokens | `dev-only-change-me` |
+| `POSTGRES_DSN` | Empty → SQLite. Set → Postgres for both memory layers | empty |
+| `API_HOST` / `API_PORT` | API bind address | `127.0.0.1` / `8000` |
+| `CORS_ORIGINS` | Comma-separated allowed origins | `http://localhost:8501` |
+| `TAVILY_API_KEY` | Optional; web fallback is off by default | — |
+
+**Two forms of `POSTGRES_DSN`:**
+
+- Native (`API` on the host, Postgres in Docker):
+  `postgresql://hr_agent:hr_agent_dev@localhost:5432/hr_agent`
+- Compose (`API` and Postgres both in Docker):
+  `postgresql://hr_agent:hr_agent_dev@postgres:5432/hr_agent`
+
+`docker-compose.yml` sets the compose form automatically, so leave
+`POSTGRES_DSN` blank in `.env` when running `docker compose up`.
+
+**Chunking, guardrails, and models** are YAML-configured and live in
+`configs/`. See [Ingestion](#ingestion) for chunking details, and
+`configs/models.yaml` for the role→provider mapping.
+
+---
+
+## Ingestion
+
+The full ingestion guide lives in
+[`docs/ingestion_guide.md`](docs/ingestion_guide.md). Quick reference:
+
+```bash
+# 1. place the source markdown
+mkdir -p data/raw data/processed
+cp /path/to/hr_policy.md data/processed/hr_policy.md
+
+# 2. run the pipeline
+uv run python -m hr_agent.ingest
+
+# 3. verify
+uv run scripts/pinecone_stats.py
+uv run python -m hr_agent.retrieval.retrieve
+```
+
+Expected output from the pipeline:
 
 ```
 [pipeline] source_doc_id = hr_policy-a1b2c3d4e5f6
@@ -171,166 +347,264 @@ What the pipeline does, in order:
 [pipeline] source_doc_id=hr_policy-a1b2c3d4e5f6 upserted=197 deleted_stale=0
 ```
 
-A success run prints four lines:
-
-| Line | Meaning |
-|---|---|
-| `source_doc_id` | Stable hash of the source file — used to version chunks. |
-| `N final chunks` | How many chunks were produced and will be embedded. |
-| `validation: …` | Chunk-quality counters. All zeros means clean chunking. |
-| `upserted=… deleted_stale=…` | Vectors upserted and stale vectors removed. |
-
-> **If `orphaned_headers` or `missing_breadcrumb` is non-zero**, the pipeline
-> prints up to five examples with a preview. Common fix: adjust the header
-> regexes in `configs/chunking.yaml` and re-run. No need to touch Python.
+The ingestion is **idempotent and diff-aware**: re-running with the same
+input overwrites the same vectors; editing the source replaces changed
+chunks and deletes stale ones. You never need to manually delete the
+namespace or recreate the index.
 
 ---
 
-## Step 4 — Inspect the Pinecone store
+## Evaluation
 
-Run the read-only stats tool to confirm vectors landed and to see per-document
-counts:
+Evaluation is a first-class part of the project, not an afterthought.
+Every change to chunking, retrieval, prompting, or model choice should be
+measurable against a frozen golden set.
+
+### Datasets
+
+| File | Purpose | Count |
+|---|---|---|
+| `data/eval/golden_dev.jsonl` | Iteration set; changes between experiments | ~40 (growing to ~130) |
+| `data/eval/golden_test.jsonl` | Frozen; only run at milestones | TBD |
+| `data/eval/seed_questions.jsonl` | Hand-written seed set from initial PDF audit | ~11 |
+
+Each line is a JSON object:
+
+```json
+{"question": "...", "expected_breadcrumb_contains": "..."}
+```
+
+A question counts as a **hit** if any of the top-k retrieved chunks has a
+`breadcrumb` metadata field containing `expected_breadcrumb_contains`
+(case-insensitive substring match). Deliberately loose — exact string
+matching would be brittle to minor heading-text differences.
+
+### Retrieval evaluation
 
 ```bash
-uv run scripts/pinecone_stats.py
+uv run scripts/run_eval.py --k 5
+uv run scripts/run_eval.py --k 5 --dataset data/eval/golden_dev.jsonl
 ```
 
-Expected output for a healthy run:
+Expected output:
 
 ```
-Index         : hr-policy-agent
-Dimension     : 384
-Total vectors : 197
-Namespaces:
-  - hr-policy-agent-namespace               197
-
-Namespace 'hr-policy-agent-namespace': 197 vectors
-Vectors for source_doc_id=hr_policy-a1b2c3d4e5f6: 197
-```
-
-What each number means:
-
-| Field | Meaning |
-|---|---|
-| `Total vectors` | Every vector in the index, across all namespaces. |
-| Per-namespace line | Count inside `settings.pinecone_namespace`. This is the one to compare against `[pipeline] N final chunks`. |
-| `Vectors for source_doc_id=…` | Vectors whose ID starts with this document's prefix (i.e. everything produced from `hr_policy.md`). |
-
-**If the namespace count is higher than the ingestion log's chunk count**,
-either the ingestion was run with random IDs at some point (old data), or a
-second document is sharing the namespace. Use `scripts/pinecone_stats.py`
-to spot the mismatch and clean the namespace if needed.
-
-**If the count is zero**, the upsert silently failed — check the Pinecone
-dashboard, region, and API key.
-
----
-
-## Step 5 — Verify retrieval
-
-Run a sample retrieval to confirm the vectors are queryable:
-
-```bash
-uv run python -m hr_agent.retrieval.retrieve
-```
-
-Expected output (truncated):
-
-```
-2 DUTIES, RIGHTS AND OBLIGATIONS > 2.2 Duties, Rights and Obligations of Staff | ## 2.2 Duties, Rights and Obligations of Staff ...
-2 DUTIES, RIGHTS AND OBLIGATIONS > 2.1 Duties, Rights and Obligations of GESCI | # 2 DUTIES, RIGHTS AND OBLIGATIONS ...
+[HIT ] What step on the salary scale does a new employee normally start at?
+       expected_contains: '4.2.1 Salary policy'
+       retrieved: ['4 REMUNERATION AND BENEFITS > 4.2 Salary structure > 4.2.1 Salary policy on appointment and promotion', ...]
 ...
+--------------------------------------------------------------------------------
+recall@5 = 81.82% (9/11)
 ```
 
-If you see breadcrumb-tagged results, the pipeline is fully wired end to end.
-
----
-
-## Re-running after the source changes
-
-The pipeline is **idempotent and diff-aware**:
-
-- Run it twice without changing `hr_policy.md` → `deleted_stale=0`, no
-  duplicate vectors. `scripts/pinecone_stats.py` still reports the same count.
-- Edit `hr_policy.md` and run again → chunks whose content changed get new
-  IDs; chunks whose content disappeared are deleted as *stale*. The stats
-  tool's per-`source_doc_id` count will reflect the new total.
-
-You never need to manually delete the namespace or recreate the index.
-
----
-
-## Tuning without editing Python
-
-All chunking knobs live in `configs/chunking.yaml`:
-
-```yaml
-length:
-  min_chars: 30                  # validator: shorter chunks are "too_short"
-  max_chars: 2200                # validator: longer  chunks are "too_long"
-  orphan_body_threshold_chars: 15
-
-splitting:
-  chunk_size: 2000               # RecursiveCharacterTextSplitter target
-  chunk_overlap: 200
-
-header_regexes:
-  section:          '^\d+\.?\s+[A-Z][A-Z\s,&]+$'
-  subsection:       '^\d+\.\d+\s+[A-Z]'
-  subsubsection:    '^\d+\.\d+\.\d+\s+[A-Z]'
-  subsubsubsection: '^\d+\.\d+\.\d+\.\d+\s+[A-Z]'
-```
-
-Edit the file, re-run `uv run python -m hr_agent.ingest`, and the new values
-take effect. No code changes, no reinstall.
-
-> In a long-running REPL/notebook, cached configs need a refresh:
->
-> ```python
-> from hr_agent.core.settings import get_chunking_config
-> get_chunking_config.cache_clear()
-> ```
-
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `ModuleNotFoundError: No module named 'hr_agent'` | Run `uv pip install -e .` from the repo root. |
-| `FileNotFoundError: configs/chunking.yaml` | Confirm the file exists with that exact name (`.yaml`, not `.yml`). |
-| `AttributeError: 'ChunkingConfig' object has no attribute 'min_chars'` | Access is at the wrong nesting level; it's `cfg.length.min_chars`, not `cfg.min_chars`. |
-| `FileNotFoundError: data/processed/hr_policy.md` | Repeat Step 2; ensure the markdown file exists. |
-| `RuntimeError: PINECONE_API_KEY is not set` | Add `PINECONE_API_KEY=...` to `.env` at the repo root. |
-| `Waiting for index to be ready...` loops forever | Check your Pinecone project region / quota in the dashboard. |
-| `deleted_stale=` grows every run with identical input | Your file has non-deterministic whitespace — normalise line endings (`dos2unix data/processed/hr_policy.md`). |
-| `pinecone_stats.py` shows more vectors than the pipeline logged | Older runs used random IDs, or another document shares the namespace. Inspect per-`source_doc_id` counts to confirm. |
-| Retrieval returns the wrong sections | Tune `length` and `header_regexes` in `configs/chunking.yaml`, then re-ingest. |
-
----
-
-## One-shot copy-paste (bash)
-
-For convenience, the full happy path in one block:
+To compare configurations, vary `--k`:
 
 ```bash
-# 0. install the package (only needed once per environment)
-uv pip install -e .
-
-# 1. create folders
-mkdir -p data/raw data/processed
-
-# 2. place the files
-cp /path/to/GESCI_HRPPM_2018.pdf data/raw/hr_policy.pdf
-cp /path/to/hr_policy.md         data/processed/hr_policy.md
-
-# 3. ingest
-uv run python -m hr_agent.ingest
-
-# 4. inspect
-uv run scripts/pinecone_stats.py
-
-# 5. verify retrieval
-uv run python -m hr_agent.retrieval.retrieve
+for k in 3 5 10; do
+  uv run scripts/run_eval.py --k $k | tail -1
+done
 ```
 
+### Evaluation strategy
+
+The full evaluation plan (from the project spec) covers:
+
+| Category | Count (target) | Purpose |
+|---|---|---|
+| Single-clause lookup | 30 | Basic retrieval + citation |
+| Table lookup (grade × item) | 20 | Deterministic tool correctness |
+| Multi-clause synthesis | 15 | Reasoning across sections |
+| Calculations (per diem, PF) | 10 | Arithmetic correctness |
+| Temporal / versioning | 15 | `as_of` correctness |
+| Multi-turn / follow-up | 10 | History-aware rewriting |
+| Unanswerable / out-of-scope | 15 | Abstention precision |
+| Adversarial / injection | 15 | Guardrail effectiveness |
+| Bangla / Banglish | 20 | Multilingual robustness |
+
+**Metrics reported:**
+
+- **Retrieval**: Recall@k, MRR, context precision vs. gold clause ids.
+- **Generation**: answer correctness (exact match for numbers, LLM judge
+  for prose), faithfulness (claim-level), citation precision/recall.
+- **Behavior**: abstention precision/recall, escalation accuracy.
+- **System**: latency p50/p95, LLM calls per query, tokens.
+- **Safety**: attack success rate, false-positive rate on benign inputs.
+
+**Rigor:**
+
+- **Judge validation** against 30–40 hand-labeled answers before trusting
+  any LLM-judged metric.
+- **Ablations**: sparse-only / dense-only / hybrid; ± reranker; chunking
+  variants; ± CRAG grading; ± reflection; guardrails on/off.
+- **Bootstrap confidence intervals** on all headline numbers.
+- **Results frozen** to `docs/results.md` with model, prompt, and config
+  hashes for reproducibility.
+
+### Running the full evaluation (when the harness is complete)
+
+```bash
+uv run python -m hr_agent.evaluation.runner \
+  --dataset data/eval/golden_test.jsonl \
+  --k 5 \
+  --output docs/results.md
+```
+
+Not yet implemented; tracked in the roadmap.
+
+---
+
+## Testing
+
+```bash
+# All tests
+uv run pytest tests/ -v
+
+# API tests only
+uv run pytest tests/api/ -v
+
+# Postgres integration (skips automatically if POSTGRES_DSN is unset)
+uv run pytest tests/integration/ -v
+```
+
+The API test suite (11 tests) covers:
+
+- Login success, bad password, unknown user.
+- Protected routes: missing token, expired token, valid token.
+- Memory CRUD: list, delete, per-user isolation.
+- Feedback: submit, requires auth, rejects invalid thumb.
+
+Postgres integration tests use the real backend when `POSTGRES_DSN` is
+set; otherwise they're skipped, so SQLite-only runs are unaffected.
+
+---
+
+## Observability
+
+Three CLI tools give you a window into what the system is doing:
+
+**Pinecone index state:**
+
+```bash
+uv run scripts/pinecone_stats.py
+```
+
+Prints total vector count, per-namespace counts, and per-`source_doc_id`
+counts (useful for detecting stale vectors after re-ingestion).
+
+**Audit log:**
+
+```bash
+uv run scripts/audit_stats.py
+```
+
+Prints total queries, blocked count, sensitive-case count, top sources,
+and the most recent rows with verdict and source.
+
+**Feedback summary:**
+
+```bash
+uv run scripts/feedback_stats.py
+```
+
+Prints thumbs-up/down totals, approval ratio, and recent feedback rows
+with the correlated `request_id`.
+
+**LLM role mapping:**
+
+```bash
+uv run scripts/show_llm_roles.py
+```
+
+Prints each role's resolved provider, model, timeout, and fallback target.
+Use this after editing `configs/models.yaml` to confirm the change took
+effect.
+
+Every `/chat` response also carries `retrieved_breadcrumbs` and
+`evidence_grade`, so a single JSON blob tells you what was retrieved, what
+the grader said, and whether the output guard accepted the answer.
+
+---
+
+## Deployment modes
+
+| Layer | Native dev | Containerized backend |
+|---|---|---|
+| Postgres | `docker compose up -d postgres` | same |
+| API | `uv run python scripts/run_api.py` | `docker compose up -d api` |
+| Streamlit UI | `uv run streamlit run ui/app.py` | same (native) |
+| Ollama | `ollama serve` | same (native) |
+| Memory backend | SQLite or Postgres (DSN) | Postgres (DSN set by compose) |
+| Config files | `configs/*.yaml` on host | mounted read-only from host |
+| Embedding cache | `~/.cache/huggingface` | `hf_cache` volume |
+
+Both modes use the same Python code. Switching is a command change, not a
+code change. See [`docs/docker.md`](docs/docker.md) and
+[`docs/postgres.md`](docs/postgres.md).
+
+---
+
+## Design decisions
+
+**Closed-domain by default.** The web fallback is off. When the policy is
+silent, the agent abstains rather than reaching for the open web. This is
+the correct behavior for a compliance-adjacent HR tool where "confidently
+wrong" is worse than "I don't know".
+
+**Additive infrastructure changes.** Postgres, Docker, and the multi-provider
+LLM layer were all added without rewriting existing code. Each has a default
+(SQLite, native processes, Groq) and an alternative (Postgres, containers,
+Ollama) selected by config. Nothing that worked at the start of a session
+stops working at the end.
+
+**Config over code.** Chunking thresholds, guardrail patterns, model
+choices, and prompt text are in `configs/*.yaml`. Editing them takes effect
+without touching Python. Where a runtime cache is unavoidable (models,
+chunking), a `cache_clear()` hook lets long-lived processes pick up edits.
+
+**One file per concern.** Nodes, prompts, LLM construction, memory writes,
+and audit writes each live in their own module. `routes/chat.py` builds
+responses; `nodes/persist.py` writes memory and audit; `llm/factory.py`
+resolves roles. If a change touches two concerns, that's a signal the
+abstraction is wrong.
+
+**Determinism where it matters.** Chunk IDs are content-addressed (same
+content → same ID → upsert overwrites). Postgres and SQLite are
+interchangeable. Audit rows use hashed user ids, not raw identifiers.
+
+**Testability by injection.** Every node that needs an LLM or a retriever
+receives it as an argument. Tests pass mocks. The graph can be built in
+isolation.
+
+---
+
+## Roadmap
+
+Beyond the current state, the following are planned:
+
+| # | Feature | Phase |
+|---|---|---|
+| 1 | Answer-guard fix for false citation rejections | 9 |
+| 2 | Table lookup + calculator tools | 8 |
+| 3 | `as_of` version resolution + document registry + canonical keys | 3, 6 |
+| 4 | Injection classifier + retrieval-side framing + red-team suite | 10 |
+| 5 | Golden set expansion to ~130 questions with frozen test split | 7, 12 |
+| 6 | Full evaluation runner with ablations and CIs | 12 |
+| 7 | Bangla + English multilingual support | 14 |
+| 8 | Real password auth (swap demo users for bcrypt + users table) | 13 |
+| 9 | Production deployment (Linux host, GPU passthrough for Ollama) | 13 |
+
+---
+
+## Documentation index
+
+- [`docs/ingestion_guide.md`](docs/ingestion_guide.md) — full ingestion walkthrough
+- [`docs/postgres.md`](docs/postgres.md) — Postgres setup, switching backends, troubleshooting
+- [`docs/docker.md`](docs/docker.md) — container build, run, and reset
+- [`docs/architecture.md`](docs/architecture.md) — deeper architecture notes
+- [`docs/results.md`](docs/results.md) — evaluation output (populated by eval runs)
+
+---
+
+## License
+
+See `LICENSE` at the repository root.

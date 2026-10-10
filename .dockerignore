@@ -1,0 +1,46 @@
+# .dockerignore
+#
+# Nothing here should be in the image. The Dockerfile copies only what it
+# needs, but .dockerignore also prevents the Docker daemon from sending
+# large build contexts (which slows builds and can leak secrets).
+
+# version control
+.git
+.gitignore
+.github
+
+# python
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.egg-info
+build/
+dist/
+
+# project state and outputs
+data/
+notebooks/
+logs/
+*.log
+
+# local secrets and editor junk
+.env
+.env.*
+!.env.example
+.vscode
+.idea
+.DS_Store
+
+# docs and tests aren't needed inside the image
+docs/
+tests/
+
+# docker-specific
+Dockerfile
+.dockerignore
+docker-compose.yml
