@@ -49,7 +49,7 @@ def get_vectorstore(
     
     
 def get_retriever(
-    k: int = 3,
+    k: int = 5,
     index_name: str | None = None,
     namespace: str | None = None,
     **search_overrides,

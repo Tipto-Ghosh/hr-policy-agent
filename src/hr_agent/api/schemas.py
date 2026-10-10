@@ -44,6 +44,8 @@ class ChatResponse(BaseModel):
     guard_reason: str
     citation_ok: bool
     grounded: bool
+    retrieved_breadcrumbs: list[str] = []
+    evidence_grade: str = ""
 
 # Memory
 class MemoryItem(BaseModel):

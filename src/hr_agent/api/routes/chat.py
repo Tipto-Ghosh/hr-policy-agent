@@ -61,6 +61,13 @@ async def chat(
         guard_reason=result.get("guard_reason", ""),
         citation_ok=result.get("citation_ok", False),
         grounded=result.get("grounded", False),
+        retretrieved_breadcrumbs=[
+            d.metadata.get("breadcrumb", "")
+            for d in result.get("retrieved_docs", [])
+        ],
+        evidence_grade=result.get(
+            "retrieved_docs_evidence_grade", ""
+        ),
     )
 
 
@@ -101,6 +108,13 @@ async def chat_stream(
                 guard_reason=values.get("guard_reason", ""),
                 citation_ok=values.get("citation_ok", False),
                 grounded=values.get("grounded", False),
+                retrieved_breadcrumbs=[
+                   d.metadata.get("breadcrumb", "")
+                   for d in values.get("retrieved_docs", [])
+               ],
+               evidence_grade=values.get(
+                   "retrieved_docs_evidence_grade", ""
+               ),
             ).model_dump()
             yield f"event: done\ndata: {json.dumps(final_payload)}\n\n"
 
