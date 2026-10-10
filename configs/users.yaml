@@ -1,0 +1,13 @@
+# Demo user list, later we will replace it with a users table and
+# bcrypt-hashed credentials.
+
+users:
+  - username: tipto
+    password: demo
+    user_id: tipto
+  - username: alice
+    password: demo
+    user_id: alice
+  - username: bob
+    password: demo
+    user_id: bob

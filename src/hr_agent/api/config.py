@@ -4,7 +4,9 @@ from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
+from pathlib import Path
+REPO_ROOT = Path(__file__).parents[3]
+DEFAULT_USERS_CONFIG_PATH = REPO_ROOT / "configs" / "users.yaml"
 
 class APISettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -25,8 +27,12 @@ class APISettings(BaseSettings):
     jwt_secret: str = Field(default="dev-only-change-me", alias="JWT_SECRET")
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 60
-
-    @property                                   # ← this is what was missing
+    
+    
+    # config path for users.yaml
+    users_config_path: Path = DEFAULT_USERS_CONFIG_PATH
+     
+    @property                                   
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

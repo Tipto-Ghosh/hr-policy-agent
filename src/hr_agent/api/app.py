@@ -19,6 +19,10 @@ from hr_agent.api.routes.chat import router as chat_router
 from hr_agent.api.routes.health import router as health_router
 from hr_agent.audit.db import init_db as init_audit_db
 
+from hr_agent.api.routes.auth import router as auth_router
+from hr_agent.api.routes.feedback import router as feedback_router
+from hr_agent.api.routes.memory import router as memory_router
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -80,6 +84,9 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router)
     app.include_router(chat_router)
+    app.include_router(auth_router)
+    app.include_router(feedback_router)
+    app.include_router(memory_router)
     return app
 
 

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from hr_agent.core.settings import get_settings
 
+SCHEMA_VERSION = 2
 
 @contextmanager
 def connect():
@@ -38,5 +39,25 @@ def init_db() -> None:
                 source_used TEXT NOT NULL,
                 trace_json TEXT NOT NULL
             )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                request_id TEXT NOT NULL,
+                user_id_hash TEXT,
+                thumb TEXT NOT NULL,
+                reason TEXT
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )"""
+        )
+        con.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', ?)",
+            (str(SCHEMA_VERSION),),
         )
         con.commit()
