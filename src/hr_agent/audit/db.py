@@ -24,22 +24,19 @@ def connect():
     finally:
         conn.close()
 
-def init_db():
-    """
-    Initialize the audit DB schema if it doesn't exist.
-    """
-    with connect() as conn:
-        conn.execute(
+def init_db() -> None:
+    with connect() as con:
+        con.execute(
             """CREATE TABLE IF NOT EXISTS query_audit (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 request_id TEXT,
-                user_id TEXT,
+                user_id_hash TEXT,
                 question TEXT NOT NULL,
-                guard_virdict TEXT,
+                guard_verdict TEXT,
                 guard_reason TEXT,
                 source_used TEXT NOT NULL,
                 trace_json TEXT NOT NULL
             )"""
         )
-        conn.commit()
+        con.commit()

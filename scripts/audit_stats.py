@@ -6,18 +6,38 @@ from pathlib import Path
 from hr_agent.core.settings import get_settings
 
 def _row_counts(con: sqlite3.Connection) -> dict:
-    total = con.execute("SELECT COUNT(*) FROM query_audit").fetchone()[0]
-    blocked = con.execute(
-        "SELECT COUNT(*) FROM query_audit "
-        "WHERE guard_verdict IS NOT NULL AND guard_verdict != '' "
-        "AND guard_verdict != 'allow'"
-    ).fetchone()[0]
-    sensitive = con.execute(
-        "SELECT COUNT(*) FROM query_audit "
-        "WHERE guard_reason LIKE '%sensitive%'"
-    ).fetchone()[0]
-    return {"total": total, "blocked": blocked, "sensitive": sensitive}
+    """
+    Count audit rows by verdict. Uses Python-side classification rather
+    than SQL string comparison so the logic is transparent and can't
+    drift from the writer's values.
+    """
+    rows = con.execute("SELECT guard_verdict FROM query_audit").fetchall()
 
+    def bucket(v):
+        # v may be None, '', or any string the writer produced.
+        if v is None:
+            return "unknown"
+        v_norm = v.strip().lower()
+        if v_norm == "":
+            return "unknown"
+        if v_norm == "ok":
+            return "ok"
+        if v_norm == "sensitive_case":
+            return "sensitive"
+        return "blocked"
+
+    counts = {"ok": 0, "blocked": 0, "sensitive": 0, "unknown": 0}
+    for (v,) in rows:
+        counts[bucket(v)] += 1
+
+    return {
+        "total": len(rows),
+        "blocked": counts["blocked"],
+        "sensitive": counts["sensitive"],
+        # kept out of the report for now, but visible if you want it
+        "unknown": counts["unknown"],
+        "ok": counts["ok"],
+    }
 def _top_sources(con: sqlite3.Connection, limit: int = 5) -> list[tuple[str, int]]:
     return con.execute(
         """SELECT source_used, COUNT(*) AS n

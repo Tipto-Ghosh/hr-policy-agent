@@ -176,6 +176,18 @@ def compile_graph(
         store = store if store is not None else get_store() 
     )
 
+
+def compile_graph_async(
+    deps, checkpointer, store = None
+):
+    """
+    Async version of compile_graph. Returns an async Runnable.
+    """
+    return build_graph(deps).compile(
+        checkpointer = checkpointer,
+        store = store or get_store(),
+    )
+
 def save_graph_image(compiled_graph: Runnable, file_path: str) -> None:
     """
     Generates a Mermaid PNG representation of the compiled graph and saves it.
