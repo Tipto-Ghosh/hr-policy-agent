@@ -12,7 +12,7 @@ def main() -> None:
         "hr_agent.api.app:app",
         host = api_settings.api_host,
         port = api_settings.api_port,
-        reload = api_settings.api_load, 
+        reload = api_settings.api_reload, 
         loop="asyncio",     
         log_level="info",
     )
